@@ -43,7 +43,7 @@ RESET = "\033[0m"
 
 # 脚本所在目录绝对路径，保证数据文件始终与脚本存放在同一目录
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
+ALL_OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
 
 ssl_context = ssl.create_default_context()
 
@@ -216,7 +216,7 @@ def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_do
     except Exception:
         pass
 
-def save_summary_report(report_path, mode, suffix, shard_num, shard_total, checked_count, node_total, found_domains, start_time, end_time):
+def save_summary_report(report_path, mode, suffix, shard_num, shard_total, checked_count, node_total, found_domains, start_time, end_time, mode_file):
     elapsed_sec = int(end_time - start_time)
     hours, remainder = divmod(elapsed_sec, 3600)
     minutes, seconds = divmod(remainder, 60)
@@ -246,8 +246,9 @@ def save_summary_report(report_path, mode, suffix, shard_num, shard_total, check
     lines.extend([
         "=" * 70,
         "【说明与后续操作建议】:",
-        "1. 纯域名清单已保存至: available_domains.txt (纯文本一行一个，可直接全选复制批量注册)",
-        "2. 推荐平价无溢价注册商 (成本价原价注册，防被宰):",
+        f"1. 本模式专属清单: {os.path.basename(mode_file)} (仅含 {mode} 纯域名，直接全选复制批量注册)",
+        "2. 全局汇总总清单: available_domains.txt (包含历史所有模式发现的域名，不重复)",
+        "3. 推荐平价无溢价注册商 (成本价原价注册，防被宰):",
         "   - Cloudflare Registrar: https://www.cloudflare.com/products/registrar/",
         "   - Porkbun: https://porkbun.com (支持支付宝，批量查询方便)",
         "   - 阿里云万网批量注册: https://wanwang.aliyun.com/domain/batchdomain/",
@@ -341,6 +342,35 @@ def main():
 
     canonical_shard = f"{shard_num}/{shard_total}"
 
+    mode_output_file = os.path.join(SCRIPT_DIR, f"available_{mode}.txt")
+    all_output_file = ALL_OUTPUT_FILE
+
+    seen_mode_domains = set()
+    if os.path.exists(mode_output_file):
+        try:
+            with open(mode_output_file, "r", encoding="utf-8") as f:
+                seen_mode_domains = {line.strip() for line in f if line.strip()}
+        except Exception:
+            pass
+
+    seen_all_domains = set()
+    if os.path.exists(all_output_file):
+        try:
+            with open(all_output_file, "r", encoding="utf-8") as f:
+                seen_all_domains = {line.strip() for line in f if line.strip()}
+        except Exception:
+            pass
+
+    def record_available_domain(dom):
+        if dom not in seen_mode_domains:
+            seen_mode_domains.add(dom)
+            with open(mode_output_file, "a", encoding="utf-8") as f:
+                f.write(f"{dom}\n")
+        if dom not in seen_all_domains:
+            seen_all_domains.add(dom)
+            with open(all_output_file, "a", encoding="utf-8") as f:
+                f.write(f"{dom}\n")
+
     print(f"{CYAN}{BOLD}===================================================={RESET}")
     print(f" {BOLD}域名极速扫描器 (DNS初筛 + Verisign RDAP权威验证){RESET}")
     print(f"{CYAN}{BOLD}===================================================={RESET}")
@@ -351,7 +381,8 @@ def main():
     else:
         print(f"扫描模式: 单机全量扫描")
     print(f"并发线程: {args.threads} 线程")
-    print(f"结果文件: {OUTPUT_FILE}")
+    print(f"模式专属清单: {mode_output_file}")
+    print(f"全局汇总清单: {all_output_file}")
     print(f"{CYAN}----------------------------------------------------{RESET}")
 
     ckpt_file = get_checkpoint_path(mode, canonical_shard)
@@ -383,8 +414,7 @@ def main():
                             found_domains.append((dom, reason))
                             msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
                             print(msg)
-                            with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
-                                f.write(f"{dom}\n")
+                            record_available_domain(dom)
                         else:
                             if args.verbose:
                                 print(f"{RED}[占用]{RESET} {dom}")
@@ -407,8 +437,7 @@ def main():
                         found_domains.append((dom, reason))
                         msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
                         print(msg)
-                        with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
-                            f.write(f"{dom}\n")
+                        record_available_domain(dom)
                 last_dom = batch[-1]
                 save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
 
@@ -420,12 +449,13 @@ def main():
         report_file = os.path.join(SCRIPT_DIR, f"scan_report_{mode}_{clean_shard}.txt")
         save_summary_report(
             report_file, mode, args.suffix, shard_num, shard_total,
-            checked_count, node_total, found_domains, start_time, end_time
+            checked_count, node_total, found_domains, start_time, end_time, mode_output_file
         )
         print(f"\n{GREEN}{BOLD}===================================================={RESET}")
         print(f" 扫描任务已收尾！本节点已完成 {checked_count:,} 个，发现可用域名 {len(found_domains)} 个")
         print(f"{GREEN}{BOLD}===================================================={RESET}")
-        print(f"📋 纯域名清单: {OUTPUT_FILE} (一行一个，可直接全选复制批量注册)")
+        print(f"📋 模式专属清单: {mode_output_file} (纯 {mode} 域名，可直接全选批量注册)")
+        print(f"📁 全局汇总总表: {all_output_file} (跨模式自动去重)")
         print(f"📄 详细总结报告: {report_file}")
 
 if __name__ == "__main__":
