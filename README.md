@@ -31,14 +31,24 @@ cd domain_scanner
 ### 2. 单机扫描命令
 
 ```bash
-# 扫描 3 位所有字母与数字组合 (46,656 个)
+# 扫描 3 位字母与数字严格混合 (必须包含字母与数字，共 28,080 个)
+python3 domain_scanner.py 3mix
+
+# 扫描 3 位所有组合 (字母+数字全量，共 46,656 个)
 python3 domain_scanner.py 3all
+
+# 扫描 3 位纯字母 (17,576 个) / 3 位纯数字 (1,000 个)
+python3 domain_scanner.py 3letter
+python3 domain_scanner.py 3num
 
 # 扫描 4 位纯数字 (10,000 个)
 python3 domain_scanner.py 4num
 
 # 扫描 4 位纯字母 (456,976 个)
 python3 domain_scanner.py 4letter
+
+# 扫描 4 位字母数字混合 (1,212,640 个)
+python3 domain_scanner.py 4mix
 
 # 扫描 5 位纯数字 (100,000 个)
 python3 domain_scanner.py 5num
@@ -48,15 +58,15 @@ python3 domain_scanner.py 5num
 
 ## 🌐 多节点分布式并行扫描
 
-如果你有多台服务器（如 3 台节点），可以使用 `--shard` 参数将字典均匀切分，速度直接翻倍：
+如果你有多台服务器（如 3 台节点），**无需加 `--shard`，直接在模式后写分片 `1/3`、`2/3`、`3/3`**（分子从 1 开始，直观易懂），速度直接翻倍：
 
 | 节点 | 运行命令 | 负责范围 |
 | :--- | :--- | :--- |
-| **节点 1 (如 US 节点)** | `python3 domain_scanner.py 4letter --shard 0/3` | 负责总量的 1/3 |
-| **节点 2 (如 JP 节点)** | `python3 domain_scanner.py 4letter --shard 1/3` | 负责总量的 1/3 |
-| **节点 3 (如 KR 节点)** | `python3 domain_scanner.py 4letter --shard 2/3` | 负责总量的 1/3 |
+| **节点 1 (如 US 节点)** | `python3 domain_scanner.py 3mix 1/3` | 负责总量的 1/3 (约 9,360 个) |
+| **节点 2 (如 JP 节点)** | `python3 domain_scanner.py 3mix 2/3` | 负责总量的 1/3 (约 9,360 个) |
+| **节点 3 (如 KR 节点)** | `python3 domain_scanner.py 3mix 3/3` | 负责总量的 1/3 (约 9,360 个) |
 
-> **提示**：每个节点会独立生成自己的断点文件（如 `checkpoint_4letter_0_3.json`），互不干扰。
+> **提示**：每个节点会独立生成自己的断点文件（如 `checkpoint_3mix_1_3.json`），互不干扰。同时依然向下兼容 `--shard 1/3` 写法。
 
 ---
 
@@ -65,8 +75,8 @@ python3 domain_scanner.py 5num
 如果你在云服务器（VPS）上扫描大字典，建议使用 `nohup` 在后台运行：
 
 ```bash
-# 后台启动
-nohup python3 domain_scanner.py 4letter > scan.log 2>&1 &
+# 后台启动 (例如 3 台服务器之一)
+nohup python3 domain_scanner.py 3mix 1/3 --threads 30 > scan.log 2>&1 &
 
 # 实时查看扫描日志与进度
 tail -f scan.log
@@ -80,15 +90,15 @@ cat available_domains.txt
 ## ⚙️ 进阶参数说明
 
 ```bash
-python3 domain_scanner.py [mode] [options]
+python3 domain_scanner.py [mode] [shard] [options]
 ```
 
 | 参数 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `mode` | `3all` | 扫描模式：`3all`、`4num`、`4letter`、`4mix`、`5num`、`5letter` |
-| `--shard` | `0/1` | 分布式分片参数，格式为 `[当前节点编号]/[总节点数]`（如 `0/3`） |
+| `mode` | `3all` | 扫描模式：`3mix`、`3all`、`3letter`、`3num`、`4mix`、`4letter`、`4num`、`4all`、`5num`、`5letter`、`5mix`、`5all` |
+| `shard` / `--shard` | `1/1` | 分布式分片参数，格式为 `[当前节点编号]/[总节点数]`（**分子从 1 开始**，如 `1/3`、`2/3`、`3/3`，单机省略） |
 | `--suffix` | `com` | 域名顶级后缀（如 `com`、`net` 等） |
-| `--threads` | `20` | 并发线程数（可根据机器性能调大至 30~50） |
+| `--threads` | `20` | 并发线程数（单机推荐 25~40 线程） |
 | `--verbose` | `False` | 是否打印每个被占用域名的详细状态（适合调试） |
 
 ---

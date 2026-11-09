@@ -9,13 +9,14 @@
 用法示例:
   单机全量扫描:
     python3 domain_scanner.py 3all
+    python3 domain_scanner.py 3mix
     python3 domain_scanner.py 4letter
     python3 domain_scanner.py 4num
 
-  3 台机器分布式切分扫描 (--shard 编号/总数):
-    机器 1 (US):  python3 domain_scanner.py 4letter --shard 0/3
-    机器 2 (JP):  python3 domain_scanner.py 4letter --shard 1/3
-    机器 3 (KR):  python3 domain_scanner.py 4letter --shard 2/3
+  3 台机器分布式切分扫描 (直接传 1/3, 2/3, 3/3，分子从 1 开始):
+    机器 1 (US):  python3 domain_scanner.py 3mix 1/3
+    机器 2 (JP):  python3 domain_scanner.py 3mix 2/3
+    机器 3 (KR):  python3 domain_scanner.py 3mix 3/3
 =============================================================================
 """
 
@@ -46,47 +47,80 @@ OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
 
 ssl_context = ssl.create_default_context()
 
+SUPPORTED_MODES = {
+    "3all": "3位全量 (字母/数字全部组合: 46,656 个)",
+    "3mix": "3位混合 (必须包含字母和数字: 28,080 个)",
+    "3letter": "3位纯字母 (26^3 = 17,576 个)",
+    "3num": "3位纯数字 (10^3 = 1,000 个)",
+    "4all": "4位全量 (字母/数字全部组合: 1,679,616 个)",
+    "4mix": "4位混合 (必须包含字母和数字: 1,212,640 个)",
+    "4letter": "4位纯字母 (26^4 = 456,976 个)",
+    "4num": "4位纯数字 (10^4 = 10,000 个)",
+    "5num": "5位纯数字 (10^5 = 100,000 个)",
+    "5letter": "5位纯字母 (26^5 = 11,881,376 个)",
+    "5mix": "5位混合 (必须包含字母和数字: 48,484,800 个)",
+    "5all": "5位全量 (字母/数字全部组合: 60,466,176 个)",
+}
+
 
 # ----------------- 字典与分片生成器 -----------------
+def is_mixed_chars(p):
+    """判断组合中是否必须同时包含字母和数字"""
+    has_l = False
+    has_d = False
+    for c in p:
+        if c.isalpha():
+            has_l = True
+        elif c.isdigit():
+            has_d = True
+        if has_l and has_d:
+            return True
+    return False
+
 def get_base_generator(mode, suffix="com"):
     letters = string.ascii_lowercase
     digits = string.digits
     alphanumeric = letters + digits
 
-    if mode == "3all":
-        for p in itertools.product(alphanumeric, repeat=3):
-            yield f"{''.join(p)}.{suffix}"
-    elif mode == "4num":
-        for p in itertools.product(digits, repeat=4):
-            yield f"{''.join(p)}.{suffix}"
-    elif mode == "4letter":
-        for p in itertools.product(letters, repeat=4):
-            yield f"{''.join(p)}.{suffix}"
-    elif mode == "4mix":
-        for p in itertools.product(alphanumeric, repeat=4):
-            yield f"{''.join(p)}.{suffix}"
-    elif mode == "5num":
-        for p in itertools.product(digits, repeat=5):
-            yield f"{''.join(p)}.{suffix}"
-    elif mode == "5letter":
-        for p in itertools.product(letters, repeat=5):
-            yield f"{''.join(p)}.{suffix}"
+    if len(mode) >= 2 and mode[0] in "345":
+        length = int(mode[0])
+        kind = mode[1:]
+        if kind == "letter":
+            chars = letters
+        elif kind == "num":
+            chars = digits
+        elif kind in ("all", "mix"):
+            chars = alphanumeric
+        else:
+            raise ValueError(f"未知模式: {mode}")
+
+        for p in itertools.product(chars, repeat=length):
+            if kind == "mix" and not is_mixed_chars(p):
+                continue
+            name = "".join(p)
+            yield f"{name}.{suffix}"
     else:
         raise ValueError(f"未知模式: {mode}")
 
 def get_mode_total(mode):
     totals = {
         "3all": 36**3,
-        "4num": 10**4,
+        "3mix": 36**3 - 26**3 - 10**3,
+        "3letter": 26**3,
+        "3num": 10**3,
+        "4all": 36**4,
+        "4mix": 36**4 - 26**4 - 10**4,
         "4letter": 26**4,
-        "4mix": 36**4,
+        "4num": 10**4,
+        "5all": 36**5,
+        "5mix": 36**5 - 26**5 - 10**5,
+        "5letter": 26**5,
         "5num": 10**5,
-        "5letter": 26**5
     }
     return totals.get(mode, 0)
 
 def get_sharded_generator(mode, suffix, shard_idx, shard_total):
-    """根据分片编号均匀抽取属于本节点的域名"""
+    """根据分片编号均匀抽取属于本节点的域名 (shard_idx 为 0 到 shard_total-1)"""
     base_gen = get_base_generator(mode, suffix)
     for idx, domain in enumerate(base_gen):
         if idx % shard_total == shard_idx:
@@ -182,58 +216,98 @@ def main():
     parser = argparse.ArgumentParser(
         description="多节点分布式域名极速扫描工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""示例:
-  python3 domain_scanner.py 3all
-  python3 domain_scanner.py 4letter --shard 0/3
-  python3 domain_scanner.py 4num --threads 25
+        epilog="""常用示例:
+  单机扫描:
+    python3 domain_scanner.py 3all
+    python3 domain_scanner.py 3mix
+    python3 domain_scanner.py 4letter --threads 30
+
+  多节点分布式扫描 (分片直接写在后面，分子从 1 开始):
+    机器 1:  python3 domain_scanner.py 3mix 1/3
+    机器 2:  python3 domain_scanner.py 3mix 2/3
+    机器 3:  python3 domain_scanner.py 3mix 3/3
+    指定线程: python3 domain_scanner.py 4letter 1/4 --threads 35
 """
     )
 
-    # 位置参数：直接写模式名称，无需 --mode
-    parser.add_argument("mode", nargs="?", default="3all",
-                        choices=["3all", "4num", "4letter", "4mix", "5num", "5letter"],
-                        help="扫描模式: 3all(3位全量), 4num(4位纯数字), 4letter(4位纯字母), 4mix(4位混合), 5num(5位数字), 5letter(5位字母) (默认: 3all)")
-    
-    parser.add_argument("--shard", default="0/1",
-                        help="分布式分片: 格式为 编号/总数 (例如 3台机器分别填: 0/3, 1/3, 2/3。单机请保持默认 0/1)")
+    parser.add_argument("arg1", nargs="?", default="3all",
+                        help="扫描模式 (如 3all, 3mix, 4letter 等) 或分片参数 (如 1/3)")
+    parser.add_argument("arg2", nargs="?", default=None,
+                        help="分片参数 (如 1/3, 2/3, 3/3)，单机可省略")
+    parser.add_argument("--shard", default=None,
+                        help="分片参数 (兼容旧写法，如 --shard 1/3)")
     parser.add_argument("--suffix", default="com", help="域名后缀 (默认: com)")
     parser.add_argument("--threads", type=int, default=20, help="并发线程数 (默认: 20)")
     parser.add_argument("--verbose", action="store_true", help="打印所有已占用域名详情")
 
     args = parser.parse_args()
 
-    # 解析分片信息
-    try:
-        parts = args.shard.split("/")
-        shard_idx = int(parts[0])
-        shard_total = int(parts[1])
-        assert 0 <= shard_idx < shard_total and shard_total >= 1
-    except Exception:
-        print(f"{RED}[!] 分片参数错误: --shard 格式必须为 [编号]/[总数]，例如 0/3、1/3{RESET}")
+    # 智能解析模式与分片
+    mode = "3all"
+    raw_shard = "1/1"
+
+    if args.shard:
+        raw_shard = args.shard
+
+    if args.arg1:
+        if "/" in args.arg1:
+            raw_shard = args.arg1
+        else:
+            mode = args.arg1.lower()
+
+    if args.arg2:
+        if "/" in args.arg2:
+            raw_shard = args.arg2
+        else:
+            mode = args.arg2.lower()
+
+    if mode not in SUPPORTED_MODES:
+        print(f"{RED}[!] 未知模式 '{mode}'。支持的模式列表:{RESET}")
+        for m, desc in SUPPORTED_MODES.items():
+            print(f"  - {YELLOW}{m:<10}{RESET}: {desc}")
         sys.exit(1)
 
-    total_all = get_mode_total(args.mode)
+    # 解析分片信息 (分子从 1 开始，例如 1/3, 2/3, 3/3)
+    try:
+        parts = raw_shard.strip().split("/")
+        shard_num = int(parts[0])
+        shard_total = int(parts[1])
+        if shard_total < 1:
+            raise ValueError("分片总数必须 >= 1")
+        if shard_num == 0:
+            raise ValueError(f"分片编号分子现已调整为从 1 开始！对于 {shard_total} 台机器，请使用 1/{shard_total} 到 {shard_total}/{shard_total}")
+        if not (1 <= shard_num <= shard_total):
+            raise ValueError(f"分片编号分子必须在 1 到 {shard_total} 之间")
+        shard_idx = shard_num - 1
+    except Exception as e:
+        print(f"{RED}[!] 分片参数错误: {e}{RESET}")
+        print(f"{YELLOW}正确格式: [编号]/[总数]，且编号从 1 开始。例如 3 台机器请分别输入: 1/3、2/3、3/3 (单机直接运行或输入 1/1){RESET}")
+        sys.exit(1)
+
+    total_all = get_mode_total(mode)
     node_total = total_all // shard_total
+
+    canonical_shard = f"{shard_num}/{shard_total}"
 
     print(f"{CYAN}{BOLD}===================================================={RESET}")
     print(f" {BOLD}域名极速扫描器 (DNS初筛 + Verisign RDAP权威验证){RESET}")
     print(f"{CYAN}{BOLD}===================================================={RESET}")
-    print(f"扫描模式: {YELLOW}{BOLD}{args.mode}{RESET} (.{args.suffix})")
+    print(f"扫描模式: {YELLOW}{BOLD}{mode}{RESET} (.{args.suffix}) - {SUPPORTED_MODES[mode]}")
     print(f"全库总量: {total_all:,} 个")
     if shard_total > 1:
-        print(f"分布式分片: {GREEN}节点 {shard_idx + 1}/{shard_total}{RESET} (本节点负责约: {node_total:,} 个)")
+        print(f"分布式分片: {GREEN}节点 {shard_num}/{shard_total}{RESET} (本节点负责约: {node_total:,} 个)")
     else:
         print(f"扫描模式: 单机全量扫描")
     print(f"并发线程: {args.threads} 线程")
     print(f"结果文件: {OUTPUT_FILE}")
     print(f"{CYAN}----------------------------------------------------{RESET}")
 
-    ckpt_file = get_checkpoint_path(args.mode, args.shard)
+    ckpt_file = get_checkpoint_path(mode, canonical_shard)
     last_checkpoint, checked_count, found_count = load_checkpoint(ckpt_file)
     if last_checkpoint:
         print(f"{YELLOW}[*] 检测到断点记录，已累计扫描 {checked_count:,} 个，即将从 {last_checkpoint} 续扫...{RESET}")
 
-    generator = get_sharded_generator(args.mode, args.suffix, shard_idx, shard_total)
+    generator = get_sharded_generator(mode, args.suffix, shard_idx, shard_total)
     skipping = bool(last_checkpoint)
 
     batch = []
@@ -263,7 +337,7 @@ def main():
                 last_dom = batch[-1]
                 save_checkpoint(ckpt_file, last_dom, checked_count, found_count)
                 pct = (checked_count / node_total * 100) if node_total else 0
-                prefix_tag = f"[分片 {shard_idx+1}/{shard_total}] " if shard_total > 1 else ""
+                prefix_tag = f"[分片 {shard_num}/{shard_total}] " if shard_total > 1 else ""
                 print(f"-> {prefix_tag}进度: {checked_count:,}/{node_total:,} ({pct:.2f}%) | 发现可用: {found_count} 个", end="\r")
                 batch = []
 
