@@ -1,0 +1,15 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output and runtime logs
+available_domains.txt
+scan.log
+checkpoint*.json
+config.json
+
+# Environments and OS
+.DS_Store
+*.swp
+*.swo

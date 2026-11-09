@@ -1,0 +1,105 @@
+# ⚡ Domain Scanner (分布式极速域名扫描工具)
+
+轻量、极速、高并发的 `.com` / 通用顶级域名批量扫描与抢注检测工具。  
+**纯 Python 3 标准库打造，零外部依赖**，支持多机分布式分片扫描、断点续扫、DNS 毫秒级预检与 Verisign 官方权威 RDAP 协议终验。
+
+---
+
+## ✨ 核心特性
+
+- **权威精准**：直接对接 `.com` 官方管理机构 **Verisign 权威 RDAP 协议**。返回 `404 Not Found` 即代表全网绝对未注册。
+- **DNS 先行初筛**：采用系统底层 DNS 解析作为一级过滤器，毫秒级剔除 85%~90% 已建站/已占用域名，大幅减少网络请求，**完全不用担心被注册局限流或封禁 IP**。
+- **多机分布式分片**：原生支持 `--shard [编号]/[总数]` 参数，利用模运算实现任务全局均匀分摊，支持多台 VPS（如 US / JP / KR 节点）并行加速。
+- **零配置零依赖**：不需要注册任何第三方 API Key（如 GoDaddy / Namecheap），直接开箱即用。
+- **流式按需生成**：内置动态组合生成器，不依赖巨大磁盘字典文件，内存占用极低（< 20MB）。
+- **断点记忆**：自动按分片与模式记录进度存盘（`checkpoint_*.json`），随时 `Ctrl+C` 暂停，下次启动无缝续扫。
+
+---
+
+## 🚀 快速上手
+
+### 环境要求
+- Python 3.8+（自带标准库即可，无需安装 `pip` 或任何第三方库）
+- Linux / macOS / Windows
+
+### 1. 克隆仓库
+```bash
+git clone https://github.com/<your-username>/domain_scanner.git
+cd domain_scanner
+```
+
+### 2. 单机扫描命令
+
+```bash
+# 扫描 3 位所有字母与数字组合 (46,656 个)
+python3 domain_scanner.py 3all
+
+# 扫描 4 位纯数字 (10,000 个)
+python3 domain_scanner.py 4num
+
+# 扫描 4 位纯字母 (456,976 个)
+python3 domain_scanner.py 4letter
+
+# 扫描 5 位纯数字 (100,000 个)
+python3 domain_scanner.py 5num
+```
+
+---
+
+## 🌐 多节点分布式并行扫描
+
+如果你有多台服务器（如 3 台节点），可以使用 `--shard` 参数将字典均匀切分，速度直接翻倍：
+
+| 节点 | 运行命令 | 负责范围 |
+| :--- | :--- | :--- |
+| **节点 1 (如 US 节点)** | `python3 domain_scanner.py 4letter --shard 0/3` | 负责总量的 1/3 |
+| **节点 2 (如 JP 节点)** | `python3 domain_scanner.py 4letter --shard 1/3` | 负责总量的 1/3 |
+| **节点 3 (如 KR 节点)** | `python3 domain_scanner.py 4letter --shard 2/3` | 负责总量的 1/3 |
+
+> **提示**：每个节点会独立生成自己的断点文件（如 `checkpoint_4letter_0_3.json`），互不干扰。
+
+---
+
+## 🖥️ 后台挂机运行（防掉线）
+
+如果你在云服务器（VPS）上扫描大字典，建议使用 `nohup` 在后台运行：
+
+```bash
+# 后台启动
+nohup python3 domain_scanner.py 4letter > scan.log 2>&1 &
+
+# 实时查看扫描日志与进度
+tail -f scan.log
+
+# 实时查看已发现的未注册域名
+cat available_domains.txt
+```
+
+---
+
+## ⚙️ 进阶参数说明
+
+```bash
+python3 domain_scanner.py [mode] [options]
+```
+
+| 参数 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `mode` | `3all` | 扫描模式：`3all`、`4num`、`4letter`、`4mix`、`5num`、`5letter` |
+| `--shard` | `0/1` | 分布式分片参数，格式为 `[当前节点编号]/[总节点数]`（如 `0/3`） |
+| `--suffix` | `com` | 域名顶级后缀（如 `com`、`net` 等） |
+| `--threads` | `20` | 并发线程数（可根据机器性能调大至 30~50） |
+| `--verbose` | `False` | 是否打印每个被占用域名的详细状态（适合调试） |
+
+---
+
+## 📁 输出文件
+
+- **`available_domains.txt`**：扫描发现的所有**未注册可用域名**，每行一条并附带验证原因。
+- **`checkpoint_<mode>_<shard>.json`**：断点记录文件。如果需要重新从头开始扫，直接删除该文件即可。
+
+---
+
+## 📄 开源许可
+
+本项目遵循 [MIT License](LICENSE)。
