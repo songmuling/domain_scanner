@@ -30,6 +30,7 @@ cd domain_scanner
 
 ### 2. 单机扫描命令
 
+#### 🅰️ 常规无符号组合
 ```bash
 # 扫描 3 位字母与数字严格混合 (必须包含字母与数字，共 28,080 个)
 python3 domain_scanner.py 3mix
@@ -52,6 +53,26 @@ python3 domain_scanner.py 4mix
 
 # 扫描 5 位纯数字 (100,000 个)
 python3 domain_scanner.py 5num
+```
+
+#### 🅱️ 连字符 `-` 捡漏淘金模式（带杠米）
+严格遵循 ICANN 规范：**首尾严禁为 `-`，严禁连续 `--`**。
+```bash
+# 4 位带杠纯字母 (仅 35,152 个，如 a-bc.com, ab-c.com，约 15 分钟即可全量扫完！)
+python3 domain_scanner.py 4letter-
+
+# 4 位带杠字母数字混合 (56,160 个，如 a-1b.com, 2z-1.com)
+python3 domain_scanner.py 4mix-
+
+# 4 位带杠纯数字 (仅 2,000 个，如 8-88.com, 12-3.com)
+python3 domain_scanner.py 4num-
+
+# 3 位带杠纯字母 (仅 676 个，如 a-b.com) / 3位带杠纯数字 (100 个)
+python3 domain_scanner.py 3letter-
+python3 domain_scanner.py 3num-
+
+# 5 位带杠纯字母 (1,388,504 个，包含热门对称型如 my-app.com, go-fun.com 以及 a-b-c.com)
+python3 domain_scanner.py 5letter-
 ```
 
 ---
@@ -95,7 +116,7 @@ python3 domain_scanner.py [mode] [shard] [options]
 
 | 参数 | 默认值 | 说明 |
 | :--- | :--- | :--- |
-| `mode` | `3all` | 扫描模式：`3mix`、`3all`、`3letter`、`3num`、`4mix`、`4letter`、`4num`、`4all`、`5num`、`5letter`、`5mix`、`5all` |
+| `mode` | `3all` | 扫描模式：常规（`3mix`、`3all`、`3letter`、`3num`、`4mix`、`4letter`、`4num`、`4all`、`5num`、`5letter`、`5mix`、`5all`）及带杠（`3letter-`、`3num-`、`3mix-`、`3all-`、`4letter-`、`4num-`、`4mix-`、`4all-`、`5num-`、`5letter-`、`5mix-`、`5all-`） |
 | `shard` / `--shard` | `1/1` | 分布式分片参数，格式为 `[当前节点编号]/[总节点数]`（**分子从 1 开始**，如 `1/3`、`2/3`、`3/3`，单机省略） |
 | `--suffix` | `com` | 域名顶级后缀（如 `com`、`net` 等） |
 | `--threads` | `20` | 并发线程数（单机推荐 25~40 线程） |

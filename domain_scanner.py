@@ -11,12 +11,14 @@
     python3 domain_scanner.py 3all
     python3 domain_scanner.py 3mix
     python3 domain_scanner.py 4letter
-    python3 domain_scanner.py 4num
+    python3 domain_scanner.py 4letter-     # 4位带横线纯字母 (如 a-bc.com)
+    python3 domain_scanner.py 4mix-        # 4位带横线字母数字混合 (如 a-1b.com)
+    python3 domain_scanner.py 4num-        # 4位带横线纯数字 (如 8-88.com)
 
   3 台机器分布式切分扫描 (直接传 1/3, 2/3, 3/3，分子从 1 开始):
-    机器 1 (US):  python3 domain_scanner.py 3mix 1/3
-    机器 2 (JP):  python3 domain_scanner.py 3mix 2/3
-    机器 3 (KR):  python3 domain_scanner.py 3mix 3/3
+    机器 1 (US):  python3 domain_scanner.py 4letter- 1/3
+    机器 2 (JP):  python3 domain_scanner.py 4letter- 2/3
+    机器 3 (KR):  python3 domain_scanner.py 4letter- 3/3
 =============================================================================
 """
 
@@ -48,6 +50,7 @@ ALL_OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
 ssl_context = ssl.create_default_context()
 
 SUPPORTED_MODES = {
+    # 标准模式 (纯数字 / 纯字母 / 混合 / 全量)
     "3all": "3位全量 (字母/数字全部组合: 46,656 个)",
     "3mix": "3位混合 (必须包含字母和数字: 28,080 个)",
     "3letter": "3位纯字母 (26^3 = 17,576 个)",
@@ -60,31 +63,41 @@ SUPPORTED_MODES = {
     "5letter": "5位纯字母 (26^5 = 11,881,376 个)",
     "5mix": "5位混合 (必须包含字母和数字: 48,484,800 个)",
     "5all": "5位全量 (字母/数字全部组合: 60,466,176 个)",
+
+    # 带连字符 '-' 模式 (首尾无连字符、无连续双连字符)
+    "3num-": "3位带杠纯数字 (如 1-2.com: 100 个)",
+    "3letter-": "3位带杠纯字母 (如 a-b.com: 676 个)",
+    "3mix-": "3位带杠混合 (如 a-1.com: 520 个)",
+    "3all-": "3位带杠全量 (1,296 个)",
+    "4num-": "4位带杠纯数字 (如 8-88.com: 2,000 个)",
+    "4letter-": "4位带杠纯字母 (如 a-bc.com, ab-c.com: 35,152 个)",
+    "4mix-": "4位带杠混合 (必须包含字母和数字: 56,160 个)",
+    "4all-": "4位带杠全量 (93,312 个)",
+    "5num-": "5位带杠纯数字 (如 88-888.com: 31,000 个)",
+    "5letter-": "5位带杠纯字母 (如 my-app.com, go-fun.com: 1,388,504 个)",
+    "5mix-": "5位带杠混合 (3,666,000 个)",
+    "5all-": "5位带杠全量 (5,085,504 个)",
 }
 
 
 # ----------------- 字典与分片生成器 -----------------
-def is_mixed_chars(p):
-    """判断组合中是否必须同时包含字母和数字"""
-    has_l = False
-    has_d = False
-    for c in p:
-        if c.isalpha():
-            has_l = True
-        elif c.isdigit():
-            has_d = True
-        if has_l and has_d:
-            return True
-    return False
+def is_mixed_chars(s):
+    """判断组合中是否必须同时包含字母和数字 (忽略连字符 '-')"""
+    has_l = any(c.isalpha() for c in s)
+    has_d = any(c.isdigit() for c in s)
+    return has_l and has_d
 
 def get_base_generator(mode, suffix="com"):
     letters = string.ascii_lowercase
     digits = string.digits
     alphanumeric = letters + digits
 
-    if len(mode) >= 2 and mode[0] in "345":
-        length = int(mode[0])
-        kind = mode[1:]
+    has_hyphen = mode.endswith("-")
+    clean_mode = mode[:-1] if has_hyphen else mode
+
+    if len(clean_mode) >= 2 and clean_mode[0] in "345":
+        length = int(clean_mode[0])
+        kind = clean_mode[1:]
         if kind == "letter":
             chars = letters
         elif kind == "num":
@@ -94,30 +107,65 @@ def get_base_generator(mode, suffix="com"):
         else:
             raise ValueError(f"未知模式: {mode}")
 
-        for p in itertools.product(chars, repeat=length):
-            if kind == "mix" and not is_mixed_chars(p):
-                continue
-            name = "".join(p)
-            yield f"{name}.{suffix}"
+        if not has_hyphen:
+            for p in itertools.product(chars, repeat=length):
+                name = "".join(p)
+                if kind == "mix" and not is_mixed_chars(name):
+                    continue
+                yield f"{name}.{suffix}"
+        else:
+            # 带连字符模式：严格遵守 ICANN 规则（首尾无 '-'，无连续 '--'）
+            if length == 3:
+                # 形态：X-X
+                for c1, c2 in itertools.product(chars, repeat=2):
+                    s = f"{c1}-{c2}"
+                    if kind == "mix" and not is_mixed_chars(s):
+                        continue
+                    yield f"{s}.{suffix}"
+            elif length == 4:
+                # 形态：X-XX, XX-X
+                for c1, c2, c3 in itertools.product(chars, repeat=3):
+                    for s in (f"{c1}-{c2}{c3}", f"{c1}{c2}-{c3}"):
+                        if kind == "mix" and not is_mixed_chars(s):
+                            continue
+                        yield f"{s}.{suffix}"
+            elif length == 5:
+                # 形态：X-XXX, XX-XX, XXX-X (单横线) 以及 X-X-X (双横线间隔)
+                for c1, c2, c3, c4 in itertools.product(chars, repeat=4):
+                    for s in (f"{c1}-{c2}{c3}{c4}", f"{c1}{c2}-{c3}{c4}", f"{c1}{c2}{c3}-{c4}"):
+                        if kind == "mix" and not is_mixed_chars(s):
+                            continue
+                        yield f"{s}.{suffix}"
+                for c1, c2, c3 in itertools.product(chars, repeat=3):
+                    s = f"{c1}-{c2}-{c3}"
+                    if kind == "mix" and not is_mixed_chars(s):
+                        continue
+                    yield f"{s}.{suffix}"
     else:
         raise ValueError(f"未知模式: {mode}")
 
 def get_mode_total(mode):
-    totals = {
-        "3all": 36**3,
-        "3mix": 36**3 - 26**3 - 10**3,
-        "3letter": 26**3,
-        "3num": 10**3,
-        "4all": 36**4,
-        "4mix": 36**4 - 26**4 - 10**4,
-        "4letter": 26**4,
-        "4num": 10**4,
-        "5all": 36**5,
-        "5mix": 36**5 - 26**5 - 10**5,
-        "5letter": 26**5,
-        "5num": 10**5,
-    }
-    return totals.get(mode, 0)
+    has_hyphen = mode.endswith("-")
+    clean_mode = mode[:-1] if has_hyphen else mode
+    length = int(clean_mode[0])
+    kind = clean_mode[1:]
+
+    def calc_hyphen(L, C):
+        if L == 3: return C**2
+        if L == 4: return 2 * C**3
+        if L == 5: return 3 * C**4 + C**3
+
+    if not has_hyphen:
+        if kind == "all": return 36**length
+        if kind == "letter": return 26**length
+        if kind == "num": return 10**length
+        if kind == "mix": return 36**length - 26**length - 10**length
+    else:
+        if kind == "all": return calc_hyphen(length, 36)
+        if kind == "letter": return calc_hyphen(length, 26)
+        if kind == "num": return calc_hyphen(length, 10)
+        if kind == "mix": return calc_hyphen(length, 36) - calc_hyphen(length, 26) - calc_hyphen(length, 10)
+    return 0
 
 def get_sharded_generator(mode, suffix, shard_idx, shard_total):
     """根据分片编号均匀抽取属于本节点的域名 (shard_idx 为 0 到 shard_total-1)"""
@@ -273,18 +321,21 @@ def main():
   单机扫描:
     python3 domain_scanner.py 3all
     python3 domain_scanner.py 3mix
-    python3 domain_scanner.py 4letter --threads 30
+    python3 domain_scanner.py 4letter
+    python3 domain_scanner.py 4letter-     # 4位带横线纯字母 (35,152 个，捡漏黄金区)
+    python3 domain_scanner.py 4mix-        # 4位带横线混合 (56,160 个)
+    python3 domain_scanner.py 4num-        # 4位带横线纯数字 (2,000 个)
 
   多节点分布式扫描 (分片直接写在后面，分子从 1 开始):
-    机器 1:  python3 domain_scanner.py 3mix 1/3
-    机器 2:  python3 domain_scanner.py 3mix 2/3
-    机器 3:  python3 domain_scanner.py 3mix 3/3
-    指定线程: python3 domain_scanner.py 4letter 1/4 --threads 35
+    机器 1:  python3 domain_scanner.py 4letter- 1/3
+    机器 2:  python3 domain_scanner.py 4letter- 2/3
+    机器 3:  python3 domain_scanner.py 4letter- 3/3
+    指定线程: python3 domain_scanner.py 4letter- 1/4 --threads 35
 """
     )
 
     parser.add_argument("arg1", nargs="?", default="3all",
-                        help="扫描模式 (如 3all, 3mix, 4letter 等) 或分片参数 (如 1/3)")
+                        help="扫描模式 (如 3all, 3mix, 4letter-, 4mix- 等) 或分片参数 (如 1/3)")
     parser.add_argument("arg2", nargs="?", default=None,
                         help="分片参数 (如 1/3, 2/3, 3/3)，单机可省略")
     parser.add_argument("--shard", default=None,
@@ -313,6 +364,23 @@ def main():
             raw_shard = args.arg2
         else:
             mode = args.arg2.lower()
+
+    # 别名映射容错 (支持 4hyphen / 4letter_ 等写法)
+    aliases = {
+        "3hyphen": "3letter-",
+        "4hyphen": "4letter-",
+        "5hyphen": "5letter-",
+        "3num_": "3num-",
+        "3letter_": "3letter-",
+        "3mix_": "3mix-",
+        "4num_": "4num-",
+        "4letter_": "4letter-",
+        "4mix_": "4mix-",
+        "5num_": "5num-",
+        "5letter_": "5letter-",
+        "5mix_": "5mix-",
+    }
+    mode = aliases.get(mode, mode)
 
     if mode not in SUPPORTED_MODES:
         print(f"{RED}[!] 未知模式 '{mode}'。支持的模式列表:{RESET}")
