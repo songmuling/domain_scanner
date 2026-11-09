@@ -103,10 +103,11 @@ python3 domain_scanner.py [mode] [shard] [options]
 
 ---
 
-## 📁 输出文件
+## 📁 输出报告与文件
 
-- **`available_domains.txt`**：扫描发现的所有**未注册可用域名**，每行一条并附带验证原因。
-- **`checkpoint_<mode>_<shard>.json`**：断点记录文件。如果需要重新从头开始扫，直接删除该文件即可。
+- **`available_domains.txt`**：**纯域名实时清单**（一行一个，每发现一个立即写盘落库）。格式极其干净，可直接全选复制粘贴到 Cloudflare / Porkbun / 阿里云等平台批量查询与批量下单。
+- **`scan_report_<mode>_<shard>.txt`**：**任务总结报告**（扫描完成或按 `Ctrl+C` 中断时自动生成）。包含扫描耗时、平均速度（QPS）、进度百分比、可用域名详细来源验证列表及平价注册商建议。
+- **`checkpoint_<mode>_<shard>.json`**：**断点记忆文件**。自动存盘当前进度与已查数据，如果需要重新从头开始扫，直接删除该文件即可。
 
 ---
 

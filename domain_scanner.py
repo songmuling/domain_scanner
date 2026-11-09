@@ -193,22 +193,74 @@ def load_checkpoint(ckpt_path):
         try:
             with open(ckpt_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return data.get("last_domain", ""), data.get("checked_count", 0), data.get("found_count", 0)
+                return (
+                    data.get("last_domain", ""),
+                    data.get("checked_count", 0),
+                    data.get("found_count", 0),
+                    data.get("found_domains", [])
+                )
         except Exception:
             pass
-    return "", 0, 0
+    return "", 0, 0, []
 
-def save_checkpoint(ckpt_path, last_domain, checked_count, found_count):
+def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_domains):
     try:
         with open(ckpt_path, "w", encoding="utf-8") as f:
             json.dump({
                 "last_domain": last_domain,
                 "checked_count": checked_count,
                 "found_count": found_count,
+                "found_domains": found_domains,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
             }, f, indent=2)
     except Exception:
         pass
+
+def save_summary_report(report_path, mode, suffix, shard_num, shard_total, checked_count, node_total, found_domains, start_time, end_time):
+    elapsed_sec = int(end_time - start_time)
+    hours, remainder = divmod(elapsed_sec, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    time_str = f"{hours}小时{minutes}分{seconds}秒" if hours else f"{minutes}分{seconds}秒"
+    qps = checked_count / elapsed_sec if elapsed_sec > 0 else 0
+
+    lines = [
+        "=" * 70,
+        "              ⚡ 域名扫描任务总结报告 (Domain Scan Report)",
+        "=" * 70,
+        f"扫描模式: {mode} (.{suffix}) - {SUPPORTED_MODES.get(mode, '')}",
+        f"分布式分片: 节点 {shard_num}/{shard_total}" if shard_total > 1 else "分布式分片: 单机全量扫描",
+        f"开始时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}",
+        f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}",
+        f"扫描耗时: {time_str} (平均 {qps:.1f} 个/秒)",
+        f"已检进度: {checked_count:,} / {node_total:,} ({(checked_count / node_total * 100) if node_total else 100:.2f}%)",
+        f"发现可用: {len(found_domains)} 个",
+        "-" * 70,
+        "【可用域名详细清单】:",
+    ]
+    if found_domains:
+        for idx, (dom, reason) in enumerate(found_domains, 1):
+            lines.append(f"  {idx:>3}. {dom:<25} -> {reason}")
+    else:
+        lines.append("  (本次扫描区间内暂未发现未注册域名)")
+
+    lines.extend([
+        "=" * 70,
+        "【说明与后续操作建议】:",
+        "1. 纯域名清单已保存至: available_domains.txt (纯文本一行一个，可直接全选复制批量注册)",
+        "2. 推荐平价无溢价注册商 (成本价原价注册，防被宰):",
+        "   - Cloudflare Registrar: https://www.cloudflare.com/products/registrar/",
+        "   - Porkbun: https://porkbun.com (支持支付宝，批量查询方便)",
+        "   - 阿里云万网批量注册: https://wanwang.aliyun.com/domain/batchdomain/",
+        "=" * 70,
+    ])
+
+    report_content = "\n".join(lines) + "\n"
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_content)
+    except Exception as e:
+        print(f"{RED}[!] 报告写入失败: {e}{RESET}")
+    return report_content
 
 
 # ----------------- 扫描主循环 -----------------
@@ -303,59 +355,78 @@ def main():
     print(f"{CYAN}----------------------------------------------------{RESET}")
 
     ckpt_file = get_checkpoint_path(mode, canonical_shard)
-    last_checkpoint, checked_count, found_count = load_checkpoint(ckpt_file)
+    last_checkpoint, checked_count, found_count, found_domains = load_checkpoint(ckpt_file)
     if last_checkpoint:
         print(f"{YELLOW}[*] 检测到断点记录，已累计扫描 {checked_count:,} 个，即将从 {last_checkpoint} 续扫...{RESET}")
 
     generator = get_sharded_generator(mode, args.suffix, shard_idx, shard_total)
     skipping = bool(last_checkpoint)
 
+    start_time = time.time()
     batch = []
-    with ThreadPoolExecutor(max_workers=args.threads) as executor:
-        for domain in generator:
-            if skipping:
-                if domain == last_checkpoint:
-                    skipping = False
-                continue
+    try:
+        with ThreadPoolExecutor(max_workers=args.threads) as executor:
+            for domain in generator:
+                if skipping:
+                    if domain == last_checkpoint:
+                        skipping = False
+                    continue
 
-            batch.append(domain)
-            if len(batch) >= args.threads * 2:
+                batch.append(domain)
+                if len(batch) >= args.threads * 2:
+                    futures = [executor.submit(check_single_domain, d) for d in batch]
+                    for fut in as_completed(futures):
+                        dom, is_free, reason = fut.result()
+                        checked_count += 1
+                        if is_free:
+                            found_count += 1
+                            found_domains.append((dom, reason))
+                            msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
+                            print(msg)
+                            with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
+                                f.write(f"{dom}\n")
+                        else:
+                            if args.verbose:
+                                print(f"{RED}[占用]{RESET} {dom}")
+
+                    last_dom = batch[-1]
+                    save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
+                    pct = (checked_count / node_total * 100) if node_total else 0
+                    prefix_tag = f"[分片 {shard_num}/{shard_total}] " if shard_total > 1 else ""
+                    print(f"-> {prefix_tag}进度: {checked_count:,}/{node_total:,} ({pct:.2f}%) | 发现可用: {found_count} 个", end="\r")
+                    batch = []
+
+            # 处理剩余尾部
+            if batch:
                 futures = [executor.submit(check_single_domain, d) for d in batch]
                 for fut in as_completed(futures):
                     dom, is_free, reason = fut.result()
                     checked_count += 1
                     if is_free:
                         found_count += 1
+                        found_domains.append((dom, reason))
                         msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
                         print(msg)
                         with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
-                            f.write(f"{dom} ({reason})\n")
-                    else:
-                        if args.verbose:
-                            print(f"{RED}[占用]{RESET} {dom}")
-
+                            f.write(f"{dom}\n")
                 last_dom = batch[-1]
-                save_checkpoint(ckpt_file, last_dom, checked_count, found_count)
-                pct = (checked_count / node_total * 100) if node_total else 0
-                prefix_tag = f"[分片 {shard_num}/{shard_total}] " if shard_total > 1 else ""
-                print(f"-> {prefix_tag}进度: {checked_count:,}/{node_total:,} ({pct:.2f}%) | 发现可用: {found_count} 个", end="\r")
-                batch = []
+                save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
 
-        # 处理剩余尾部
-        if batch:
-            futures = [executor.submit(check_single_domain, d) for d in batch]
-            for fut in as_completed(futures):
-                dom, is_free, reason = fut.result()
-                checked_count += 1
-                if is_free:
-                    found_count += 1
-                    msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
-                    print(msg)
-                    with open(OUTPUT_FILE, "a", encoding="utf-8") as f:
-                        f.write(f"{dom} ({reason})\n")
-
-    print(f"\n\n{GREEN}{BOLD}=== 扫描完毕！本节点共完成 {checked_count:,} 个，发现可用域名 {found_count} 个 ==={RESET}")
-    print(f"可用域名清单已保存至: {OUTPUT_FILE}")
+    except KeyboardInterrupt:
+        print(f"\n\n{YELLOW}[!] 扫描被用户中断 (Ctrl+C)，当前进度已安全保存。{RESET}")
+    finally:
+        end_time = time.time()
+        clean_shard = canonical_shard.replace('/', '_')
+        report_file = os.path.join(SCRIPT_DIR, f"scan_report_{mode}_{clean_shard}.txt")
+        save_summary_report(
+            report_file, mode, args.suffix, shard_num, shard_total,
+            checked_count, node_total, found_domains, start_time, end_time
+        )
+        print(f"\n{GREEN}{BOLD}===================================================={RESET}")
+        print(f" 扫描任务已收尾！本节点已完成 {checked_count:,} 个，发现可用域名 {len(found_domains)} 个")
+        print(f"{GREEN}{BOLD}===================================================={RESET}")
+        print(f"📋 纯域名清单: {OUTPUT_FILE} (一行一个，可直接全选复制批量注册)")
+        print(f"📄 详细总结报告: {report_file}")
 
 if __name__ == "__main__":
     main()
