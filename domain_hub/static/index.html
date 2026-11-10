@@ -528,9 +528,7 @@
               <div class="pl-4">-e HUB_TOKEN="{{ clusterToken }}" \</div>
               <div class="pl-4">-e NODE_ID="My-Node-Name" \</div>
               <div class="pl-4">domain-agent:latest</div>
-              <button @click="copyText(`docker run -d --restart unless-stopped --name domain-agent -e HUB_URL=\"
-                http://192.168.200.12:8088\" -e HUB_TOKEN=\"${clusterToken}\" -e NODE_ID=\"My-Node\"
-                domain-agent:latest`)"
+              <button @click="copyDockerCmd"
                 class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white">
                 复制命令
               </button>
@@ -651,6 +649,11 @@
           navigator.clipboard.writeText(txt).then(() => {
             showToast(`已复制: ${txt}`);
           });
+        };
+
+        const copyDockerCmd = () => {
+          const cmd = `docker run -d --restart unless-stopped --name domain-agent -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node" domain-agent:latest`;
+          copyText(cmd);
         };
 
         const formatTime = (ts) => {
@@ -894,7 +897,7 @@
           openDispatchModal, dispatching, dispatchForm, selectedNodeList, toggleSelectAllNodes,
           submitDispatch, stopClusterTask, deleteNode,
           openTokenModal, openImportModal, importText, importMode, importing,
-          copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
+          copyText, copyDockerCmd, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
           submitImport, exportCurrent, refreshAll
         };
       }
