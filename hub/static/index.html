@@ -33,7 +33,7 @@
   </script>
   <style>
     [v-cloak] {
-      opacity: 0.9;
+      display: none !important;
     }
 
     ::-webkit-scrollbar {
@@ -109,30 +109,37 @@
       </div>
     </header>
 
-    <!-- 当前活跃任务横幅 (若有任务正在运行) -->
-    <div v-if="stats.active_task"
-      class="bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-800/60 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
-      <div class="flex items-center gap-3">
-        <span class="text-2xl animate-spin inline-block">⚙️</span>
-        <div>
-          <div class="flex items-center gap-2">
-            <span class="text-xs font-semibold text-indigo-300 uppercase">当前全网正在扫描:</span>
-            <span
-              class="px-2 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono">
-              {{ stats.active_task.mode }}
-            </span>
-            <span class="text-[11px] text-slate-400">任务ID: {{ stats.active_task.task_id }}</span>
+    <!-- 当前活跃任务横幅 (支持多任务异构并行调度) -->
+    <div v-if="activeTaskList && activeTaskList.length > 0" class="space-y-3">
+      <div v-for="t in activeTaskList" :key="t.task_id"
+        class="bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-800/60 p-3.5 sm:p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+        <div class="flex items-center gap-3">
+          <span class="text-2xl animate-spin inline-block">⚙️</span>
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="text-xs font-semibold text-indigo-300 uppercase">活跃扫描任务:</span>
+              <span
+                class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono">
+                {{ t.mode }} ({{ t.suffix || 'com' }})
+              </span>
+              <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono">
+                {{ t.running_shards || 0 }}/{{ t.total_shards || 0 }} 节点运行中
+              </span>
+              <span class="text-[11px] text-slate-500 font-mono hidden md:inline">ID: {{ t.task_id }}</span>
+            </div>
+            <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-3 sm:gap-4 flex-wrap">
+              <span>进度: <b class="text-white font-mono">{{ (t.scanned || 0).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ t.progress_pct || 0 }}%)</span>
+              <span>综合速率: <b class="text-emerald-400 font-mono">{{ t.speed || 0 }} 个/秒</b></span>
+              <span>发现可用: <b class="text-indigo-300 font-mono">{{ t.available_count || 0 }} 个</b></span>
+            </div>
           </div>
-          <p class="text-xs text-slate-400 mt-0.5">
-            参与节点集群正在实时切片扫描，综合速度: <b class="text-emerald-400">{{ stats.total_speed }} 个/秒</b>
-          </p>
         </div>
-      </div>
-      <div class="flex items-center gap-2">
-        <button @click="stopClusterTask(stats.active_task.task_id)"
-          class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-500 text-white text-xs font-medium rounded-lg border border-red-500 transition shadow flex items-center gap-1.5">
-          ⏹️ 停止此集群任务
-        </button>
+        <div class="flex items-center gap-2 shrink-0 self-end sm:self-center">
+          <button @click="stopClusterTask(t.task_id)"
+            class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-500 text-white text-xs font-medium rounded-lg border border-red-500 transition shadow flex items-center gap-1.5">
+            ⏹️ 停止此任务
+          </button>
+        </div>
       </div>
     </div>
 
@@ -648,7 +655,7 @@
                 </div>
                 <div class="text-[11px] font-medium"
                   :class="node.status === 'running' ? 'text-indigo-400' : (node.status === 'completed' ? 'text-sky-400' : 'text-emerald-400')">
-                  {{ node.status === 'running' ? '⚡ 正在扫描' : (node.status === 'completed' ? '🔵 分片已完成' : '🟢 在线待命') }}
+                  {{ node.status === 'running' ? ('⚡ 扫描中: ' + (node.mode || '') + (node.shard ? ' (' + node.shard + ')' : '')) : (node.status === 'completed' ? '🔵 分片已完成' : '🟢 在线待命') }}
                 </div>
               </label>
 
@@ -1074,6 +1081,16 @@
 
         const onlineNodes = computed(() => nodes.value.filter(n => n.status !== 'offline'));
         const offlineNodes = computed(() => nodes.value.filter(n => n.status === 'offline'));
+
+        const activeTaskList = computed(() => {
+          if (stats.value && Array.isArray(stats.value.active_tasks) && stats.value.active_tasks.length > 0) {
+            return stats.value.active_tasks;
+          }
+          if (stats.value && stats.value.active_task) {
+            return [stats.value.active_task];
+          }
+          return [];
+        });
 
         const canDispatch = computed(() => {
           const hasChars = dispatchForm.value.use_letters || dispatchForm.value.use_digits;
@@ -1526,7 +1543,7 @@
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
           activeAgentTab, isEditingToken, newTokenInput,
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
-          submitDispatch, stopClusterTask, deleteNode,
+          submitDispatch, stopClusterTask, deleteNode, activeTaskList,
           openTokenModal, openImportModal, importText, importMode, importing,
           openBatchRecheckModal, batchRecheckScope, batchRecheckState,
           startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,

@@ -470,10 +470,32 @@ class HubHandler(BaseHTTPRequestHandler):
                 active_nodes = active_row[0]
                 total_speed = round(active_row[1], 1)
 
-                # 当前全局活跃任务
-                cur.execute("SELECT task_id, mode, status, created_at FROM tasks WHERE status = 'running' ORDER BY created_at DESC LIMIT 1;")
-                active_task_row = cur.fetchone()
-                active_task = dict(active_task_row) if active_task_row else None
+                # 全局活跃任务列表 (支持异构多任务并发)
+                cur.execute("""
+                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, t.created_at,
+                       COUNT(a.id) as total_shards,
+                       SUM(CASE WHEN a.status = 'running' THEN 1 ELSE 0 END) as running_shards,
+                       SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
+                       COALESCE(SUM(a.scanned), 0) as scanned,
+                       COALESCE(SUM(a.total), 0) as total,
+                       COALESCE(SUM(a.speed), 0) as speed,
+                       COALESCE(SUM(a.available_count), 0) as available_count
+                FROM tasks t
+                LEFT JOIN task_assignments a ON t.task_id = a.task_id
+                WHERE t.status = 'running'
+                GROUP BY t.task_id
+                ORDER BY t.created_at DESC;
+                """)
+                active_tasks = []
+                for row in cur.fetchall():
+                    item = dict(row)
+                    sc = item.get("scanned", 0) or 0
+                    tt = item.get("total", 0) or 0
+                    item["progress_pct"] = round((sc / tt * 100), 1) if tt > 0 else 0.0
+                    item["speed"] = round(item.get("speed", 0.0) or 0.0, 1)
+                    active_tasks.append(item)
+
+                active_task = active_tasks[0] if active_tasks else None
 
             self.send_json({
                 "code": 0,
@@ -486,7 +508,8 @@ class HubHandler(BaseHTTPRequestHandler):
                     "active_nodes": active_nodes,
                     "total_speed": total_speed,
                     "mode_stats": mode_stats,
-                    "active_task": active_task
+                    "active_task": active_task,
+                    "active_tasks": active_tasks
                 }
             })
             return
@@ -699,26 +722,30 @@ class HubHandler(BaseHTTPRequestHandler):
                         WHERE task_id = ? AND node_id = ?;
                         """, (scanned, total, speed, avail_cnt, effective_assign_status, task_id, node_id))
 
-                        # 检查当前任务是否所有分片均已完成
+                        # 检查当前任务是否所有参与分片均已完成
                         cur = conn.cursor()
                         cur.execute("""
                         SELECT COUNT(*) as total_shards,
-                               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_shards
+                               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
+                               SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) as active_shards
                         FROM task_assignments WHERE task_id = ?;
                         """, (task_id,))
                         task_stat_row = cur.fetchone()
-                        if task_stat_row and task_stat_row["total_shards"] > 0 and task_stat_row["total_shards"] == task_stat_row["completed_shards"]:
-                            conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
+                        if task_stat_row and task_stat_row["active_shards"] == 0:
+                            if task_stat_row["completed_shards"] > 0:
+                                conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
+                            else:
+                                conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
 
-                    # 检查 Master 是否有为该节点下发的新指令
+                    # 检查 Master 是否有为该节点下发的新指令 (获取该节点的最新分配)
                     cur = conn.cursor()
                     cur.execute("""
                     SELECT a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
                            t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
-                    WHERE a.node_id = ? AND t.status IN ('running', 'stopped')
-                    ORDER BY t.created_at DESC LIMIT 1;
+                    WHERE a.node_id = ?
+                    ORDER BY t.created_at DESC, a.id DESC LIMIT 1;
                     """, (node_id,))
                     assign_row = cur.fetchone()
                     conn.commit()
@@ -733,14 +760,24 @@ class HubHandler(BaseHTTPRequestHandler):
                     assign_status = assign_row["assign_status"]
                     assign_scanned = assign_row["assign_scanned"] or 0
 
-                    if t_status == "stopped":
-                        if task_id == assigned_task_id and client_status not in ("idle", "completed"):
+                    # 1. 任务或当前节点分片已被停止
+                    if t_status == "stopped" or assign_status == "stopped":
+                        if task_id == assigned_task_id and client_status not in ("idle", "completed", "stopped"):
                             command = "STOP"
-                    elif t_status == "running":
-                        # 若当前节点分片已经完成，绝不下发 START，避免死循环
-                        if assign_status == "completed":
+                        else:
                             command = "IDLE"
-                        elif task_id != assigned_task_id or client_status in ("idle", "stopped"):
+
+                    # 2. 当前节点分片已完成
+                    elif assign_status == "completed":
+                        command = "IDLE"
+
+                    # 3. 任务与节点分片均处于活跃状态
+                    elif t_status == "running" and assign_status in ("pending", "running"):
+                        if task_id == assigned_task_id and client_status == "running":
+                            # 已经在正确执行该分片
+                            command = "IDLE"
+                        else:
+                            # 需启动或切换到该分片任务
                             command = "START"
                             row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
                             
@@ -877,8 +914,24 @@ class HubHandler(BaseHTTPRequestHandler):
             shard_total = len(selected_nodes)
 
             with get_db() as conn:
-                # 将此前所有正在运行的任务标记为停止
-                conn.execute("UPDATE tasks SET status = 'stopped' WHERE status = 'running';")
+                # 仅针对本次被勾选的节点，停止它们在此前正在执行的分片任务 (绝不影响未被勾选的其他节点继续扫描)
+                placeholders = ",".join("?" * len(selected_nodes))
+                conn.execute(f"""
+                UPDATE task_assignments
+                SET status = 'stopped', updated_at = CURRENT_TIMESTAMP
+                WHERE node_id IN ({placeholders}) AND status IN ('pending', 'running');
+                """, selected_nodes)
+
+                # 对于历史任务，若已没有任何活跃分片 (无 pending 或 running 分片)，自动标记该历史任务为 stopped
+                conn.execute("""
+                UPDATE tasks
+                SET status = 'stopped', updated_at = CURRENT_TIMESTAMP
+                WHERE status = 'running'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM task_assignments a
+                      WHERE a.task_id = tasks.task_id AND a.status IN ('pending', 'running')
+                  );
+                """)
 
                 # 创建新任务
                 conn.execute("""
