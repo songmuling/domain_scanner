@@ -204,7 +204,7 @@
                 <span v-if="node.status === 'running'"
                   class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span class="relative inline-flex rounded-full h-2 w-2"
-                  :class="node.status === 'running' ? 'bg-emerald-400' : (node.status === 'idle' ? 'bg-amber-400' : 'bg-slate-500')"></span>
+                  :class="node.status === 'running' ? 'bg-emerald-400' : (node.status === 'completed' ? 'bg-sky-400' : (node.status === 'idle' ? 'bg-amber-400' : 'bg-slate-500'))"></span>
               </span>
               <span class="font-bold text-sm text-slate-200">{{ node.node_id }}</span>
             </div>
@@ -212,6 +212,10 @@
               <span v-if="node.status === 'running'"
                 class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono">
                 {{ node.mode }} <span v-if="node.shard">({{ node.shard }})</span>
+              </span>
+              <span v-else-if="node.status === 'completed'"
+                class="px-2 py-0.5 text-[10px] rounded-full bg-sky-950/60 text-sky-300 border border-sky-800/40">
+                已完成
               </span>
               <span v-else-if="node.status === 'idle'"
                 class="px-2 py-0.5 text-[10px] rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/40">
@@ -643,8 +647,8 @@
                   <span class="text-[10px] text-slate-400 font-mono">{{ node.ip || '内网' }}</span>
                 </div>
                 <div class="text-[11px] font-medium"
-                  :class="node.status === 'running' ? 'text-indigo-400' : 'text-emerald-400'">
-                  {{ node.status === 'running' ? '⚡ 正在扫描' : '🟢 在线待命' }}
+                  :class="node.status === 'running' ? 'text-indigo-400' : (node.status === 'completed' ? 'text-sky-400' : 'text-emerald-400')">
+                  {{ node.status === 'running' ? '⚡ 正在扫描' : (node.status === 'completed' ? '🔵 分片已完成' : '🟢 在线待命') }}
                 </div>
               </label>
 

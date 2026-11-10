@@ -44,6 +44,7 @@ class ScanWorker:
         self.threads = task_info.get("threads", 25)
 
         self.is_running = False
+        self.is_completed = False
         self.stop_requested = False
         self.checked_count = 0
         self.found_count = 0
@@ -162,7 +163,11 @@ class ScanWorker:
         finally:
             self.is_running = False
             self.speed = 0.0
-            print(f"\n[*] 任务 {self.task_id} 工作线程已停止。总计扫描 {self.checked_count:,} 个")
+            if not self.stop_requested:
+                self.is_completed = True
+                print(f"\n[🎉 扫描完成] 任务 {self.task_id} 分片 {canonical_shard} 已全量扫描完毕！共核查 {self.checked_count:,} 个，命中可用域名 {self.found_count} 个")
+            else:
+                print(f"\n[*] 任务 {self.task_id} 工作线程已停止。当前核查进度 {self.checked_count:,} / {self.total:,}")
 
 class HubClient:
     def __init__(self, hub_url, token, node_id):
@@ -207,6 +212,15 @@ class HubClient:
             scanned = worker.checked_count
             total = worker.total
             speed = worker.speed
+            avail = worker.found_count
+        elif worker and worker.is_completed:
+            status = "completed"
+            task_id = worker.task_id
+            mode = worker.mode
+            shard = f"{worker.shard_num}/{worker.shard_total}"
+            scanned = worker.checked_count
+            total = worker.total
+            speed = 0.0
             avail = worker.found_count
         else:
             status = "idle"
@@ -294,14 +308,16 @@ def main():
                 task_data = resp.get("task")
 
                 if cmd == "START" and task_data:
-                    # 启动新任务
-                    if current_worker and current_worker.is_running:
-                        if current_worker.task_id != task_data["task_id"]:
+                    # 如果已经在跑相同的任务，不重复启动
+                    if current_worker and current_worker.is_running and current_worker.task_id == task_data["task_id"]:
+                        pass
+                    # 如果当前 worker 已经把这个任务跑完了，绝不重复启动
+                    elif current_worker and current_worker.is_completed and current_worker.task_id == task_data["task_id"]:
+                        pass
+                    else:
+                        if current_worker and current_worker.is_running:
                             print(f"[*] 收到新任务，正在切换停止旧任务 {current_worker.task_id}...")
                             current_worker.stop()
-                            current_worker = None
-
-                    if not current_worker or not current_worker.is_running:
                         print(f"\n[🚀 收到 Master 任务指令] 模式: {task_data['mode']}, 分片: {task_data['shard_num']}/{task_data['shard_total']}")
                         current_worker = ScanWorker(task_data, client)
                         current_worker.start()
@@ -310,6 +326,7 @@ def main():
                     if current_worker and current_worker.is_running:
                         print(f"\n[⏹️ 收到 Master 停止指令] 正在停止任务...")
                         current_worker.stop()
+                    current_worker = None
 
             time.sleep(2.5)
 

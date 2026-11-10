@@ -689,16 +689,32 @@ class HubHandler(BaseHTTPRequestHandler):
 
                     # 如果在跑任务，同步更新任务分片进度
                     if task_id:
+                        effective_assign_status = client_status
+                        if client_status == "completed" or (total > 0 and scanned >= total):
+                            effective_assign_status = "completed"
+
                         conn.execute("""
                         UPDATE task_assignments SET
                             scanned = ?, total = ?, speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE task_id = ? AND node_id = ?;
-                        """, (scanned, total, speed, avail_cnt, client_status, task_id, node_id))
+                        """, (scanned, total, speed, avail_cnt, effective_assign_status, task_id, node_id))
+
+                        # 检查当前任务是否所有分片均已完成
+                        cur = conn.cursor()
+                        cur.execute("""
+                        SELECT COUNT(*) as total_shards,
+                               SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_shards
+                        FROM task_assignments WHERE task_id = ?;
+                        """, (task_id,))
+                        task_stat_row = cur.fetchone()
+                        if task_stat_row and task_stat_row["total_shards"] > 0 and task_stat_row["total_shards"] == task_stat_row["completed_shards"]:
+                            conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
 
                     # 检查 Master 是否有为该节点下发的新指令
                     cur = conn.cursor()
                     cur.execute("""
-                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
+                    SELECT a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
+                           t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
                     WHERE a.node_id = ? AND t.status IN ('running', 'stopped')
@@ -714,14 +730,26 @@ class HubHandler(BaseHTTPRequestHandler):
                 if assign_row:
                     t_status = assign_row["task_status"]
                     assigned_task_id = assign_row["task_id"]
+                    assign_status = assign_row["assign_status"]
+                    assign_scanned = assign_row["assign_scanned"] or 0
 
                     if t_status == "stopped":
-                        if task_id == assigned_task_id and client_status != "idle":
+                        if task_id == assigned_task_id and client_status not in ("idle", "completed"):
                             command = "STOP"
                     elif t_status == "running":
-                        if task_id != assigned_task_id or client_status == "idle":
+                        # 若当前节点分片已经完成，绝不下发 START，避免死循环
+                        if assign_status == "completed":
+                            command = "IDLE"
+                        elif task_id != assigned_task_id or client_status in ("idle", "stopped"):
                             command = "START"
                             row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
+                            
+                            # 关键容错：只在分片首次认领（status == 'pending' 且 scanned == 0）时允许 reset_checkpoint
+                            # 若 Agent 是中途断线重连（assign_scanned > 0 或 status != 'pending'），强制设为 False，保障断点继续生效！
+                            should_reset_ckpt = False
+                            if assign_status == "pending" and assign_scanned == 0:
+                                should_reset_ckpt = bool(assign_row["reset_checkpoint"]) if "reset_checkpoint" in row_keys and assign_row["reset_checkpoint"] is not None else False
+
                             task_payload = {
                                 "task_id": assigned_task_id,
                                 "mode": assign_row["mode"],
@@ -729,12 +757,17 @@ class HubHandler(BaseHTTPRequestHandler):
                                 "use_letters": bool(assign_row["use_letters"]) if "use_letters" in row_keys and assign_row["use_letters"] is not None else True,
                                 "use_digits": bool(assign_row["use_digits"]) if "use_digits" in row_keys and assign_row["use_digits"] is not None else False,
                                 "use_hyphen": bool(assign_row["use_hyphen"]) if "use_hyphen" in row_keys and assign_row["use_hyphen"] is not None else False,
-                                "reset_checkpoint": bool(assign_row["reset_checkpoint"]) if "reset_checkpoint" in row_keys and assign_row["reset_checkpoint"] is not None else False,
+                                "reset_checkpoint": should_reset_ckpt,
                                 "suffix": assign_row["suffix"],
                                 "shard_num": assign_row["shard_num"],
                                 "shard_total": assign_row["shard_total"],
                                 "threads": assign_row["threads"]
                             }
+
+                            if assign_status == "pending":
+                                with get_db() as conn:
+                                    conn.execute("UPDATE task_assignments SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND node_id = ?;", (assigned_task_id, node_id))
+                                    conn.commit()
 
                 self.send_json({
                     "code": 0,
