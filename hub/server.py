@@ -1392,8 +1392,8 @@ class HubHandler(BaseHTTPRequestHandler):
                                     s_idx, e_idx, cur_tot = ensure_assignment_bounds(conn, cand, parent_task)
                                     c_scanned = cand["scanned"] or 0
                                     remaining = cur_tot - c_scanned
-                                    if remaining > 20000:
-                                        # 触发尾部工作窃取：从慢节点的未扫尾部切出 5 万（或一半）
+                                    if remaining > 5000:
+                                        # 触发尾部工作窃取：从慢节点的未扫尾部切出最多 5 万（或剩余的一半）
                                         slice_size = min(50000, remaining // 2)
                                         slice_end = e_idx
                                         slice_start = slice_end - slice_size
