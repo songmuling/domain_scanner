@@ -53,7 +53,232 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #475569;
     }
+
+    /* ========================================================= */
+    /* 明亮浅色模式 (Light Theme) 优雅精细化适配                 */
+    /* ========================================================= */
+    html:not(.dark) {
+      color-scheme: light;
+    }
+
+    html:not(.dark) body {
+      background-color: #f8fafc !important;
+      color: #0f172a !important;
+    }
+
+    /* 页面背景与卡片 */
+    html:not(.dark) .bg-\[\#0b0f19\] {
+      background-color: #f8fafc !important;
+    }
+
+    html:not(.dark) .bg-\[\#131b2e\] {
+      background-color: #ffffff !important;
+      border-color: #e2e8f0 !important;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+    }
+
+    html:not(.dark) .bg-slate-900,
+    html:not(.dark) .bg-slate-900\/80,
+    html:not(.dark) .bg-slate-900\/60,
+    html:not(.dark) .bg-slate-900\/40 {
+      background-color: #ffffff !important;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+    }
+
+    html:not(.dark) .bg-slate-950,
+    html:not(.dark) .bg-slate-950\/80,
+    html:not(.dark) .bg-slate-950\/70,
+    html:not(.dark) .bg-slate-950\/60,
+    html:not(.dark) .bg-slate-950\/50,
+    html:not(.dark) .bg-slate-950\/40 {
+      background-color: #f1f5f9 !important;
+    }
+
+    /* 边框线条 */
+    html:not(.dark) .border-slate-800,
+    html:not(.dark) .border-slate-800\/80,
+    html:not(.dark) .border-slate-800\/60,
+    html:not(.dark) .border-slate-800\/50,
+    html:not(.dark) .border-slate-800\/40,
+    html:not(.dark) .border-slate-800\/30,
+    html:not(.dark) .border-slate-700,
+    html:not(.dark) .border-slate-700\/60 {
+      border-color: #e2e8f0 !important;
+    }
+
+    /* 文字色彩 */
+    html:not(.dark) .text-white,
+    html:not(.dark) .text-slate-100,
+    html:not(.dark) .text-slate-200 {
+      color: #0f172a !important;
+    }
+
+    html:not(.dark) .text-slate-300,
+    html:not(.dark) .text-slate-400 {
+      color: #475569 !important;
+    }
+
+    html:not(.dark) .text-slate-500 {
+      color: #64748b !important;
+    }
+
+    html:not(.dark) .text-indigo-300,
+    html:not(.dark) .text-indigo-200 {
+      color: #4f46e5 !important;
+    }
+
+    html:not(.dark) .text-emerald-400 {
+      color: #059669 !important;
+    }
+
+    html:not(.dark) .text-rose-400 {
+      color: #e11d48 !important;
+    }
+
+    html:not(.dark) .text-amber-400 {
+      color: #d97706 !important;
+    }
+
+    html:not(.dark) .text-sky-400 {
+      color: #0284c7 !important;
+    }
+
+    /* 浅色徽章背景 */
+    html:not(.dark) .bg-indigo-950\/80,
+    html:not(.dark) .bg-indigo-950\/60,
+    html:not(.dark) .bg-indigo-950\/40,
+    html:not(.dark) .bg-indigo-950\/20 {
+      background-color: #e0e7ff !important;
+      border-color: #c7d2fe !important;
+    }
+
+    html:not(.dark) .bg-emerald-950\/80,
+    html:not(.dark) .bg-emerald-950\/60,
+    html:not(.dark) .bg-emerald-950\/40,
+    html:not(.dark) .bg-emerald-950\/20 {
+      background-color: #d1fae5 !important;
+      border-color: #a7f3d0 !important;
+    }
+
+    html:not(.dark) .bg-rose-950\/60,
+    html:not(.dark) .bg-rose-950\/40,
+    html:not(.dark) .bg-rose-950\/20 {
+      background-color: #ffe4e6 !important;
+      border-color: #fecdd3 !important;
+    }
+
+    html:not(.dark) .bg-amber-950\/60,
+    html:not(.dark) .bg-amber-950\/40,
+    html:not(.dark) .bg-amber-950\/20 {
+      background-color: #fef3c7 !important;
+      border-color: #fde68a !important;
+    }
+
+    html:not(.dark) .bg-sky-950\/60,
+    html:not(.dark) .bg-sky-950\/40 {
+      background-color: #e0f2fe !important;
+      border-color: #bae6fd !important;
+    }
+
+    html:not(.dark) .bg-blue-950\/60 {
+      background-color: #eff6ff !important;
+      border-color: #bfdbfe !important;
+      color: #2563eb !important;
+    }
+
+    html:not(.dark) .hover\:bg-blue-900:hover {
+      background-color: #dbeafe !important;
+    }
+
+    /* 输入框与选择器 */
+    html:not(.dark) input,
+    html:not(.dark) select,
+    html:not(.dark) textarea {
+      background-color: #ffffff !important;
+      color: #0f172a !important;
+      border-color: #cbd5e1 !important;
+    }
+
+    html:not(.dark) select option {
+      background-color: #ffffff !important;
+      color: #0f172a !important;
+    }
+
+    /* 表格与条目 */
+    html:not(.dark) thead tr {
+      background-color: #f1f5f9 !important;
+    }
+
+    html:not(.dark) .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]) {
+      border-color: #f1f5f9 !important;
+    }
+
+    html:not(.dark) tbody tr:hover {
+      background-color: #f8fafc !important;
+    }
+
+    html:not(.dark) .hover\:bg-slate-800\/30:hover {
+      background-color: #f8fafc !important;
+    }
+
+    html:not(.dark) .bg-slate-800,
+    html:not(.dark) .bg-slate-800\/80,
+    html:not(.dark) .bg-slate-800\/50 {
+      background-color: #f1f5f9 !important;
+      color: #334155 !important;
+      border-color: #cbd5e1 !important;
+    }
+
+    html:not(.dark) .hover\:bg-slate-800:hover,
+    html:not(.dark) .hover\:bg-slate-700:hover {
+      background-color: #e2e8f0 !important;
+      color: #0f172a !important;
+    }
+
+    /* 活跃任务渐变横幅浅色适配 */
+    html:not(.dark) .from-indigo-950\/60 {
+      --tw-gradient-from: #e0e7ff !important;
+    }
+
+    html:not(.dark) .via-slate-900 {
+      --tw-gradient-stops: #e0e7ff, #ffffff, #ffffff !important;
+    }
+
+    html:not(.dark) .to-slate-900 {
+      --tw-gradient-to: #ffffff !important;
+    }
+
+    /* 模态框阴影与遮罩 */
+    html:not(.dark) .bg-black\/75 {
+      background-color: rgb(15 23 42 / 0.5) !important;
+    }
+
+    /* 滚动条浅色适配 */
+    html:not(.dark) ::-webkit-scrollbar-track {
+      background: #f1f5f9;
+    }
+
+    html:not(.dark) ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+
+    html:not(.dark) ::-webkit-scrollbar-thumb:hover {
+      background: #94a3b8;
+    }
   </style>
+  <!-- 避免浅色模式刷新闪烁 (FOUC 拦截) -->
+  <script>
+    (function () {
+      try {
+        if (localStorage.getItem('theme') === 'light') {
+          document.documentElement.classList.remove('dark');
+        } else {
+          document.documentElement.classList.add('dark');
+        }
+      } catch (e) {}
+    })();
+  </script>
 </head>
 
 <body
@@ -102,9 +327,17 @@
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
           📤 导出
         </button>
-        <button @click="refreshAll" :disabled="loading"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition">
+        <button @click="refreshAll" :disabled="loading" title="手动立即刷新同步资产库"
+          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
           <span :class="{'animate-spin inline-block': loading}">🔄</span>
+          <span class="hidden sm:inline">刷新数据</span>
+        </button>
+        <!-- 🌓 明亮/暗色模式切换 -->
+        <button @click="toggleTheme"
+          class="px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
+          :class="isDark ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700' : 'bg-white hover:bg-slate-100 text-indigo-600 border-slate-300 shadow-sm'"
+          :title="isDark ? '点击切换为浅色明亮模式' : '点击切换为深色沉浸模式'">
+          <span>{{ isDark ? '☀️ 浅色' : '🌙 深色' }}</span>
         </button>
       </div>
     </header>
@@ -1005,6 +1238,31 @@
       setup() {
         const loading = ref(false);
         const toastMsg = ref('');
+        const isDark = ref(true);
+
+        const initTheme = () => {
+          try {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light') {
+              isDark.value = false;
+              document.documentElement.classList.remove('dark');
+            } else {
+              isDark.value = true;
+              document.documentElement.classList.add('dark');
+            }
+          } catch (e) {}
+        };
+
+        const toggleTheme = () => {
+          isDark.value = !isDark.value;
+          if (isDark.value) {
+            document.documentElement.classList.add('dark');
+            try { localStorage.setItem('theme', 'dark'); } catch (e) {}
+          } else {
+            document.documentElement.classList.remove('dark');
+            try { localStorage.setItem('theme', 'light'); } catch (e) {}
+          }
+        };
         const stats = ref({});
         const nodes = ref([]);
         const clusterToken = ref('');
@@ -1628,6 +1886,7 @@
         };
 
         onMounted(() => {
+          initTheme();
           window.addEventListener('keydown', handleKeyDown);
           refreshAll();
           setInterval(() => {
@@ -1640,6 +1899,7 @@
         });
 
         return {
+          isDark, toggleTheme,
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
           prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
