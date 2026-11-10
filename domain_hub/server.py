@@ -137,6 +137,21 @@ def init_db_and_token():
                     except Exception:
                         pass
 
+            # 自动迁移 tasks 旧表结构
+            cur.execute("PRAGMA table_info(tasks);")
+            task_cols = {row["name"] for row in cur.fetchall()}
+            for col, col_type in [
+                ("length", "INTEGER DEFAULT 4"),
+                ("use_letters", "BOOLEAN DEFAULT 1"),
+                ("use_digits", "BOOLEAN DEFAULT 0"),
+                ("use_hyphen", "BOOLEAN DEFAULT 0")
+            ]:
+                if col not in task_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type};")
+                    except Exception:
+                        pass
+
             # 确保 Master Token 存在
             env_token = os.environ.get("HUB_TOKEN", "").strip()
             cur = conn.cursor()
@@ -579,7 +594,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     # 检查 Master 是否有为该节点下发的新指令
                     cur = conn.cursor()
                     cur.execute("""
-                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.suffix, t.threads, t.status as task_status
+                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.suffix, t.threads, t.status as task_status
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
                     WHERE a.node_id = ? AND t.status IN ('running', 'stopped')
@@ -602,9 +617,14 @@ class HubHandler(BaseHTTPRequestHandler):
                     elif t_status == "running":
                         if task_id != assigned_task_id or client_status == "idle":
                             command = "START"
+                            row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
                             task_payload = {
                                 "task_id": assigned_task_id,
                                 "mode": assign_row["mode"],
+                                "length": assign_row["length"] if "length" in row_keys and assign_row["length"] is not None else 4,
+                                "use_letters": bool(assign_row["use_letters"]) if "use_letters" in row_keys and assign_row["use_letters"] is not None else True,
+                                "use_digits": bool(assign_row["use_digits"]) if "use_digits" in row_keys and assign_row["use_digits"] is not None else False,
+                                "use_hyphen": bool(assign_row["use_hyphen"]) if "use_hyphen" in row_keys and assign_row["use_hyphen"] is not None else False,
                                 "suffix": assign_row["suffix"],
                                 "shard_num": assign_row["shard_num"],
                                 "shard_total": assign_row["shard_total"],
@@ -665,20 +685,36 @@ class HubHandler(BaseHTTPRequestHandler):
         # 二、 Web 控制台调度与管理接口
         # -------------------------------------------------------------
 
-        # 1. 一键分发扫描任务到选中的节点
+        # 1. 一键分发扫描任务到选中的节点 (支持 3~5 位自由组合)
         if path == "/api/task/dispatch":
             data = self.read_json_body()
-            mode = data.get("mode", "").strip().lower()
+            length = int(data.get("length", 4))
+            use_letters = bool(data.get("use_letters", True))
+            use_digits = bool(data.get("use_digits", False))
+            use_hyphen = bool(data.get("use_hyphen", False))
             suffix = data.get("suffix", "com").strip().lower()
             threads = int(data.get("threads", 25))
             selected_nodes = data.get("nodes", [])
 
-            if not mode:
-                self.send_json({"code": 1, "msg": "扫描模式不能为空"}, 400)
+            if length not in (3, 4, 5):
+                self.send_json({"code": 1, "msg": "字符长度仅支持 3 ~ 5 位"}, 400)
+                return
+            if not use_letters and not use_digits:
+                self.send_json({"code": 1, "msg": "必须勾选字母或数字其中一种"}, 400)
                 return
             if not selected_nodes:
                 self.send_json({"code": 1, "msg": "必须至少勾选一个在线节点"}, 400)
                 return
+
+            # 推导标准模式名称，与资产库展示完全统一
+            if use_letters and use_digits:
+                type_name = "mix"
+            elif use_digits:
+                type_name = "num"
+            else:
+                type_name = "letter"
+            hyphen_suffix = "-" if use_hyphen else ""
+            mode = f"{length}{type_name}{hyphen_suffix}"
 
             task_id = f"task_{int(datetime.now().timestamp())}_{mode}"
             shard_total = len(selected_nodes)
@@ -689,9 +725,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 创建新任务
                 conn.execute("""
-                INSERT INTO tasks (task_id, mode, suffix, threads, target_nodes, status)
-                VALUES (?, ?, ?, ?, ?, 'running');
-                """, (task_id, mode, suffix, threads, json.dumps(selected_nodes)))
+                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads, target_nodes, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running');
+                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, suffix, threads, json.dumps(selected_nodes)))
 
                 # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)
                 for idx, n_id in enumerate(selected_nodes, start=1):
@@ -705,8 +741,27 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({
                 "code": 0,
                 "msg": f"任务已创建！已自动切为 {shard_total} 分片并下发到选中的节点",
-                "task_id": task_id
+                "task_id": task_id,
+                "mode": mode
             })
+            return
+
+        # 1.1 修改/更新集群通信 Token
+        if path == "/api/token/update":
+            data = self.read_json_body()
+            new_token = data.get("token", "").strip()
+            if not new_token or len(new_token) < 8:
+                self.send_json({"code": 1, "msg": "Token 长度不能少于 8 位"}, 400)
+                return
+            with get_db() as conn:
+                conn.execute("""
+                INSERT INTO system_config (key, value, updated_at) VALUES ('agent_token', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+                """, (new_token,))
+                conn.commit()
+            global MASTER_TOKEN
+            MASTER_TOKEN = new_token
+            self.send_json({"code": 0, "msg": "集群通信 Token 已成功更新！", "token": new_token})
             return
 
         # 2. 停止集群任务

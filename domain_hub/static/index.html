@@ -92,7 +92,7 @@
         </button>
         <button @click="openTokenModal = true"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-          🔑 接入 Token
+          🤖 接入 Agent
         </button>
         <button @click="openImportModal = true"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
@@ -415,7 +415,7 @@
       </div>
     </section>
 
-    <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher) -->
+    <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher - 自由定义位数与规则) -->
     <div v-if="openDispatchModal"
       class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
@@ -427,20 +427,72 @@
         </div>
 
         <div class="space-y-3.5 text-xs">
+          <!-- 自定义位数 (3~5 位) -->
           <div>
-            <label class="block text-slate-300 font-medium mb-1">扫描模式 (选择你想扫的字典类型):</label>
-            <select v-model="dispatchForm.mode"
-              class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
-              <option value="4letter-">4letter- (4位带横杠字母: 3.5万个，极客捡漏黄金区 ⭐)</option>
-              <option value="4mix-">4mix- (4位带横杠字母数字混合: 5.6万个)</option>
-              <option value="4num-">4num- (4位带横杠纯数字: 2,000个)</option>
-              <option value="3letter-">3letter- (3位带横杠字母: 676个)</option>
-              <option value="3mix-">3mix- (3位带横杠混合: 520个)</option>
-              <option value="4mix">4mix (4位字母数字混合: 121万个)</option>
-              <option value="5letter">5letter (5位纯字母: 1188万个)</option>
-              <option value="5num-">5num- (5位带横杠纯数字: 3万个)</option>
-              <option value="5letter-">5letter- (5位带横杠纯字母: 138万个)</option>
-            </select>
+            <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 5 位):</label>
+            <div class="grid grid-cols-3 gap-2">
+              <button type="button" v-for="len in [3, 4, 5]" :key="len"
+                @click="dispatchForm.length = len"
+                :class="dispatchForm.length === len ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'"
+                class="py-2 rounded-xl border text-center font-bold text-xs transition">
+                {{ len }} 位字符
+              </button>
+            </div>
+          </div>
+
+          <!-- 字符组合与连字符选项 -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+            <div>
+              <label class="block text-slate-400 mb-1.5 font-medium">2. 字符组成 (多选):</label>
+              <div class="space-y-2">
+                <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                  <input type="checkbox" v-model="dispatchForm.use_letters"
+                    class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>包含纯字母 (a-z)</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                  <input type="checkbox" v-model="dispatchForm.use_digits"
+                    class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>包含纯数字 (0-9)</span>
+                </label>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-slate-400 mb-1.5 font-medium">3. 连字符设置:</label>
+              <label class="flex items-start gap-2 cursor-pointer text-slate-200 pt-0.5">
+                <input type="checkbox" v-model="dispatchForm.use_hyphen"
+                  class="rounded border-slate-700 text-indigo-600 focus:ring-0 mt-0.5">
+                <div>
+                  <span class="block">包含连字符 “-”</span>
+                  <span class="text-[10px] text-slate-500 block">自动插在非首尾位置 (如 ab-cd)</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <!-- 动态实时计算卡片 -->
+          <div class="bg-indigo-950/30 border border-indigo-900/60 p-3 rounded-xl space-y-1.5">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-400 text-[11px]">匹配模式名称:</span>
+              <span class="font-mono font-bold text-indigo-300 text-xs px-2 py-0.5 bg-indigo-900/40 rounded border border-indigo-700/50">
+                {{ derivedModeName }}
+              </span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-slate-400 text-[11px]">示例域名格式:</span>
+              <span class="font-mono text-slate-300 text-[11px]">{{ previewExamples }}</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-slate-400 text-[11px]">全量候选池总数:</span>
+              <span class="font-bold text-emerald-400 text-xs">{{ estimatedTotal.toLocaleString() }} 个</span>
+            </div>
+            <div class="flex items-center justify-between border-t border-indigo-900/40 pt-1.5">
+              <span class="text-slate-400 text-[11px]">单机均摊任务量:</span>
+              <span class="text-slate-200 text-xs">
+                已选 <b class="text-indigo-400">{{ selectedNodeList.length }}</b> 台 · 约 <b class="text-white">{{ perNodeCount.toLocaleString() }}</b> 个/台
+              </span>
+            </div>
           </div>
 
           <div class="grid grid-cols-2 gap-3">
@@ -464,7 +516,7 @@
                 {{ selectedNodeList.length === nodes.length ? '取消全选' : '全部勾选' }}
               </button>
             </div>
-            <div class="space-y-1.5 max-h-48 overflow-y-auto bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
+            <div class="space-y-1.5 max-h-36 overflow-y-auto bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
               <label v-for="node in nodes" :key="node.node_id"
                 class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/60 cursor-pointer">
                 <div class="flex items-center gap-2">
@@ -473,64 +525,140 @@
                   <span class="font-bold text-slate-200">{{ node.node_id }}</span>
                   <span class="text-[10px] text-slate-500 font-mono">{{ node.ip }}</span>
                 </div>
-                <span class="text-[10px] px-1.5 py-0.5 rounded"
-                  :class="node.status === 'running' ? 'bg-indigo-950 text-indigo-400' : 'bg-slate-800 text-slate-400'">
-                  {{ node.status === 'running' ? '扫描中' : '空闲中' }}
-                </span>
+                <div class="text-[11px] text-slate-400">
+                  {{ node.status === 'scanning' ? '⚡ 扫描中' : '🟢 空闲就绪' }}
+                </div>
               </label>
+              <div v-if="nodes.length === 0" class="text-center py-3 text-slate-500 text-xs">
+                暂无在线节点，请先在右上角【接入 Agent】
+              </div>
             </div>
-            <p class="text-[11px] text-slate-500 mt-1">系统将自动把选中的节点按 1/N 到 N/N 均分切片并直接下发指令。</p>
           </div>
         </div>
 
-        <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
           <button @click="openDispatchModal = false"
-            class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
-          <button @click="submitDispatch" :disabled="dispatching || selectedNodeList.length === 0"
-            class="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg shadow transition">
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">取消</button>
+          <button @click="submitDispatch" :disabled="dispatching || !canDispatch"
+            class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition">
             {{ dispatching ? '正在下发任务...' : '立即分发开跑 🚀' }}
           </button>
         </div>
       </div>
     </div>
 
-    <!-- 模态框 2：Agent 接入 Token 与部署命令 -->
+    <!-- 模态框 2：Agent 接入指南与部署模板切换 -->
     <div v-if="openTokenModal"
       class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl p-5 space-y-4 shadow-2xl">
         <div class="flex items-center justify-between border-b border-slate-800 pb-3">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
-            <span>🔑</span> 集群通信 Token 与 Agent 接入指南
+            <span>🤖</span> 接入 Agent 扫描节点
           </h3>
           <button @click="openTokenModal = false" class="text-slate-400 hover:text-white">✕</button>
         </div>
 
-        <div class="space-y-3 text-xs">
-          <div>
-            <label class="block text-slate-400 mb-1">当前 Master 鉴权 Token (Bearer Token):</label>
-            <div class="flex items-center gap-2">
+        <div class="space-y-4 text-xs">
+          <!-- Token 展示与修改区 -->
+          <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
+            <div class="flex items-center justify-between mb-1">
+              <label class="text-slate-400 font-medium">集群通信鉴权 Token (Bearer Token):</label>
+              <button @click="isEditingToken = !isEditingToken" class="text-indigo-400 hover:text-indigo-300 text-[11px]">
+                {{ isEditingToken ? '取消修改' : '✏️ 修改 Token' }}
+              </button>
+            </div>
+
+            <!-- 常规展示 -->
+            <div v-if="!isEditingToken" class="flex items-center gap-2 mt-1">
               <input :value="clusterToken" readonly
-                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-indigo-300 font-mono text-xs">
+                class="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 text-indigo-300 font-mono text-xs">
               <button @click="copyText(clusterToken)"
-                class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs whitespace-nowrap">
+                class="px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs whitespace-nowrap font-medium transition">
                 复制 Token
               </button>
             </div>
+
+            <!-- 修改表单 -->
+            <div v-else class="flex items-center gap-2 mt-1">
+              <input v-model="newTokenInput" placeholder="输入新的 16~32 位安全 Token..."
+                class="w-full bg-slate-900 border border-indigo-700 rounded-lg px-3 py-1.5 text-white font-mono text-xs">
+              <button @click="saveNewToken"
+                class="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs whitespace-nowrap font-semibold transition">
+                保存
+              </button>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1.5">
+              💡 Token 持久化保存在 JP 的 <code class="text-slate-400">/root/docker_data/domain_hub/data/domain_hub.db</code> 中，重启容器不丢失。
+            </div>
           </div>
 
+          <!-- 部署模板切换 Tabs -->
           <div>
-            <label class="block text-slate-400 mb-1">任意机器一键启动 Agent (Docker 方式):</label>
-            <div
+            <div class="flex items-center justify-between mb-2">
+              <label class="text-slate-300 font-medium">选择客户端部署运行方式:</label>
+              <div class="flex p-0.5 bg-slate-950 rounded-lg border border-slate-800">
+                <button type="button" @click="activeAgentTab = 'docker_run'"
+                  :class="activeAgentTab === 'docker_run' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                  class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                  🐳 Docker Run
+                </button>
+                <button type="button" @click="activeAgentTab = 'docker_compose'"
+                  :class="activeAgentTab === 'docker_compose' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                  class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                  📦 Compose
+                </button>
+                <button type="button" @click="activeAgentTab = 'python'"
+                  :class="activeAgentTab === 'python' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-slate-200'"
+                  class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                  🐍 Python 脚本
+                </button>
+              </div>
+            </div>
+
+            <!-- Tab 1: Docker Run -->
+            <div v-if="activeAgentTab === 'docker_run'"
               class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
               <div>docker run -d --restart unless-stopped \</div>
               <div class="pl-4">--name domain-agent \</div>
+              <div class="pl-4">--network host \</div>
               <div class="pl-4">-e HUB_URL="http://192.168.200.12:8088" \</div>
               <div class="pl-4">-e HUB_TOKEN="{{ clusterToken }}" \</div>
               <div class="pl-4">-e NODE_ID="My-Node-Name" \</div>
               <div class="pl-4">domain-agent:latest</div>
-              <button @click="copyDockerCmd"
-                class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white">
-                复制命令
+              <button @click="copyDockerRunCmd"
+                class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
+                一键复制
+              </button>
+            </div>
+
+            <!-- Tab 2: Docker Compose -->
+            <div v-if="activeAgentTab === 'docker_compose'"
+              class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-0.5">
+              <div>version: '3.8'</div>
+              <div>services:</div>
+              <div class="pl-2">domain-agent:</div>
+              <div class="pl-4">image: domain-agent:latest</div>
+              <div class="pl-4">container_name: domain-agent</div>
+              <div class="pl-4">restart: unless-stopped</div>
+              <div class="pl-4">network_mode: host</div>
+              <div class="pl-4">environment:</div>
+              <div class="pl-6">- HUB_URL=http://192.168.200.12:8088</div>
+              <div class="pl-6">- HUB_TOKEN={{ clusterToken }}</div>
+              <div class="pl-6">- NODE_ID=My-Node-Name</div>
+              <button @click="copyComposeYaml"
+                class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
+                一键复制
+              </button>
+            </div>
+
+            <!-- Tab 3: Python 脚本直接运行 (OpenWrt / 软路由) -->
+            <div v-if="activeAgentTab === 'python'"
+              class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+              <div class="text-slate-500 mb-1"># 适用于软路由 (OpenWrt) 或无 Docker 的 VPS (零依赖 Python 3 标准库):</div>
+              <div>python3 agent.py --hub http://192.168.200.12:8088 --token {{ clusterToken }} --name My-Node-Name</div>
+              <button @click="copyPythonCmd"
+                class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
+                一键复制
               </button>
             </div>
           </div>
@@ -612,8 +740,57 @@
 
         const openDispatchModal = ref(false);
         const dispatching = ref(false);
-        const dispatchForm = ref({ mode: '4mix-', suffix: 'com', threads: 25 });
+        const dispatchForm = ref({
+          length: 4,
+          use_letters: true,
+          use_digits: false,
+          use_hyphen: true,
+          threads: 25,
+          suffix: 'com'
+        });
         const selectedNodeList = ref([]);
+
+        const activeAgentTab = ref('docker_run');
+        const isEditingToken = ref(false);
+        const newTokenInput = ref('');
+
+        const canDispatch = computed(() => {
+          return (dispatchForm.value.use_letters || dispatchForm.value.use_digits) && selectedNodeList.value.length > 0;
+        });
+
+        const estimatedTotal = computed(() => {
+          let pool = 0;
+          if (dispatchForm.value.use_letters) pool += 26;
+          if (dispatchForm.value.use_digits) pool += 10;
+          if (pool === 0) return 0;
+          const base = Math.pow(pool, dispatchForm.value.length);
+          return dispatchForm.value.use_hyphen ? base * (dispatchForm.value.length - 1) : base;
+        });
+
+        const derivedModeName = computed(() => {
+          let type = 'letter';
+          if (dispatchForm.value.use_letters && dispatchForm.value.use_digits) type = 'mix';
+          else if (dispatchForm.value.use_digits) type = 'num';
+          return `${dispatchForm.value.length}${type}${dispatchForm.value.use_hyphen ? '-' : ''}`;
+        });
+
+        const previewExamples = computed(() => {
+          const len = dispatchForm.value.length;
+          const hasH = dispatchForm.value.use_hyphen;
+          const sample = dispatchForm.value.use_digits && !dispatchForm.value.use_letters ? '12345' : (dispatchForm.value.use_digits ? 'a1b2c' : 'abcde');
+          if (!hasH) {
+            return `${sample.slice(0, len)}.com`;
+          }
+          if (len === 3) return 'a-b.com, ab-c.com';
+          if (len === 4) return 'ab-cd.com, a-bcd.com, abc-d.com';
+          return 'ab-cde.com, abc-de.com';
+        });
+
+        const perNodeCount = computed(() => {
+          const count = selectedNodeList.value.length;
+          if (count === 0 || estimatedTotal.value === 0) return 0;
+          return Math.ceil(estimatedTotal.value / count);
+        });
 
         const openTokenModal = ref(false);
         const openImportModal = ref(false);
@@ -647,13 +824,45 @@
 
         const copyText = (txt) => {
           navigator.clipboard.writeText(txt).then(() => {
-            showToast(`已复制: ${txt}`);
+            showToast(`已复制到剪贴板`);
           });
         };
 
-        const copyDockerCmd = () => {
-          const cmd = `docker run -d --restart unless-stopped --name domain-agent -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node" domain-agent:latest`;
-          copyText(cmd);
+        const copyDockerRunCmd = () => {
+          copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" domain-agent:latest`);
+        };
+
+        const copyComposeYaml = () => {
+          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: domain-agent:latest\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    environment:\n      - HUB_URL=http://192.168.200.12:8088\n      - HUB_TOKEN=${clusterToken.value}\n      - NODE_ID=My-Node-Name\n`);
+        };
+
+        const copyPythonCmd = () => {
+          copyText(`python3 agent.py --hub http://192.168.200.12:8088 --token ${clusterToken.value} --name My-Node-Name`);
+        };
+
+        const saveNewToken = async () => {
+          if (!newTokenInput.value || newTokenInput.value.trim().length < 8) {
+            showToast('Token 长度不能少于 8 位');
+            return;
+          }
+          try {
+            const res = await fetch('/api/token/update', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ token: newTokenInput.value.trim() })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+              clusterToken.value = data.token;
+              isEditingToken.value = false;
+              newTokenInput.value = '';
+              showToast(data.msg);
+            } else {
+              showToast(data.msg || '更新失败');
+            }
+          } catch (e) {
+            showToast('更新 Token 请求失败');
+          }
         };
 
         const formatTime = (ts) => {
@@ -745,13 +954,20 @@
             showToast('请至少选择一个节点');
             return;
           }
+          if (!dispatchForm.value.use_letters && !dispatchForm.value.use_digits) {
+            showToast('请至少勾选字母或数字一种字符');
+            return;
+          }
           dispatching.value = true;
           try {
             const res = await fetch('/api/task/dispatch', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                mode: dispatchForm.value.mode,
+                length: dispatchForm.value.length,
+                use_letters: dispatchForm.value.use_letters,
+                use_digits: dispatchForm.value.use_digits,
+                use_hyphen: dispatchForm.value.use_hyphen,
                 suffix: dispatchForm.value.suffix,
                 threads: dispatchForm.value.threads,
                 nodes: selectedNodeList.value
@@ -895,9 +1111,12 @@
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
           prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList, toggleSelectAllNodes,
+          canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
+          activeAgentTab, isEditingToken, newTokenInput,
+          saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
           submitDispatch, stopClusterTask, deleteNode,
           openTokenModal, openImportModal, importText, importMode, importing,
-          copyText, copyDockerCmd, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
+          copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
           submitImport, exportCurrent, refreshAll
         };
       }

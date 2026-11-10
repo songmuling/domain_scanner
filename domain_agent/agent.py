@@ -19,17 +19,17 @@ import urllib.request
 import urllib.error
 import threading
 
-# 引入核心扫描器引擎
+# 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-PARENT_DIR = os.path.dirname(SCRIPT_DIR)
 sys.path.insert(0, SCRIPT_DIR)
-sys.path.insert(0, PARENT_DIR)
 
 try:
-    import domain_scanner
+    from . import scanner
 except ImportError:
-    # 尝试从当前目录引入
-    from . import domain_scanner
+    try:
+        import scanner
+    except ImportError:
+        import domain_scanner as scanner
 
 class ScanWorker:
     """受控的多线程扫描工作线程，支持随时被 Master 停止与监控"""
@@ -67,15 +67,26 @@ class ScanWorker:
         canonical_shard = f"{self.shard_num}/{self.shard_total}"
         shard_idx = self.shard_num - 1
 
-        total_all = domain_scanner.get_mode_total(self.mode)
-        self.total = total_all // self.shard_total
+        # 解析任务规则 (支持全自定义规则与旧版模式名称)
+        if "length" in self.task_info:
+            length = int(self.task_info["length"])
+            use_letters = bool(self.task_info.get("use_letters", True))
+            use_digits = bool(self.task_info.get("use_digits", False))
+            use_hyphen = bool(self.task_info.get("use_hyphen", False))
+        else:
+            length, use_letters, use_digits, use_hyphen = scanner.parse_mode_string(self.mode)
+
+        total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
+        start_idx = (shard_idx * total_all) // self.shard_total
+        end_idx = ((shard_idx + 1) * total_all) // self.shard_total
+        self.total = end_idx - start_idx
 
         # 断点存盘
         clean_shard = canonical_shard.replace("/", "_")
         ckpt_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
-        last_ckpt, self.checked_count, self.found_count, found_domains = domain_scanner.load_checkpoint(ckpt_file)
+        last_ckpt, self.checked_count, self.found_count, found_domains = scanner.load_checkpoint(ckpt_file)
 
-        generator = domain_scanner.get_sharded_generator(self.mode, self.suffix, shard_idx, self.shard_total)
+        generator = scanner.get_sharded_generator(length, use_letters, use_digits, use_hyphen, self.suffix, shard_idx, self.shard_total)
         skipping = bool(last_ckpt)
 
         start_time = time.time()
@@ -98,7 +109,7 @@ class ScanWorker:
 
                     batch.append(domain)
                     if len(batch) >= self.threads * 2:
-                        futures = [executor.submit(domain_scanner.check_single_domain, d) for d in batch]
+                        futures = [executor.submit(scanner.check_single_domain, d) for d in batch]
                         for fut in as_completed(futures):
                             dom, is_free, reason = fut.result()
                             self.checked_count += 1
@@ -109,7 +120,7 @@ class ScanWorker:
                                 self.hub.report_domain(dom, self.mode, reason)
 
                         last_dom = batch[-1]
-                        domain_scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
+                        scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
 
                         # 计算即时速度
                         now = time.time()
@@ -122,7 +133,7 @@ class ScanWorker:
                         batch = []
 
                 if batch and not self.stop_requested:
-                    futures = [executor.submit(domain_scanner.check_single_domain, d) for d in batch]
+                    futures = [executor.submit(scanner.check_single_domain, d) for d in batch]
                     for fut in as_completed(futures):
                         dom, is_free, reason = fut.result()
                         self.checked_count += 1
@@ -131,7 +142,7 @@ class ScanWorker:
                             found_domains.append((dom, reason))
                             self.hub.report_domain(dom, self.mode, reason)
                     last_dom = batch[-1]
-                    domain_scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
+                    scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
 
         except Exception as e:
             print(f"扫描异常: {e}")
