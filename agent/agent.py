@@ -18,6 +18,8 @@ import argparse
 import urllib.request
 import urllib.error
 import threading
+import queue
+import signal
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -99,6 +101,16 @@ class ScanWorker:
             found_domains = []
         else:
             last_ckpt, self.checked_count, self.found_count, found_domains = scanner.load_checkpoint(ckpt_file)
+            if self.checked_count > 0:
+                print(f"[*] 发现历史断点：已核查 {self.checked_count:,} 个，命中可用 {self.found_count} 个，断点记录点: {last_ckpt or '起始'}")
+            # 容灾兜底：历史断点中保存的可用域名同步推入上报队列，保证即便历史重启时 Hub 掉线也能完整补录
+            if found_domains:
+                for item in found_domains:
+                    if isinstance(item, (list, tuple)) and len(item) >= 2:
+                        d, r = item[0], item[1]
+                    else:
+                        d, r = str(item), "404 未注册"
+                    self.hub.report_domain(d, self.mode, r)
 
         generator = scanner.get_sharded_generator(length, use_letters, use_digits, use_hyphen, self.suffix, shard_idx, self.shard_total)
         skipping = bool(last_ckpt)
@@ -174,6 +186,10 @@ class HubClient:
         self.hub_url = hub_url.rstrip("/")
         self.token = token
         self.node_id = node_id
+        self._report_queue = queue.Queue()
+        self._stop_event = threading.Event()
+        self._reporter_thread = threading.Thread(target=self._report_worker, daemon=True)
+        self._reporter_thread.start()
 
     def _post(self, path, payload, timeout=4):
         url = f"{self.hub_url}{path}"
@@ -249,17 +265,59 @@ class HubClient:
             return None
 
     def report_domain(self, domain, mode, reason):
-        def _worker():
+        """将发现的可用域名推入异步重试队列，防止任何由于 Hub 重启或网络抖动导致的丢数"""
+        item = {
+            "domain": domain,
+            "mode": mode,
+            "reason": reason
+        }
+        self._report_queue.put(item)
+
+    def _report_worker(self):
+        """后台高可靠批量上报与故障重试线程"""
+        while not self._stop_event.is_set():
+            batch = []
             try:
-                self._post("/api/agent/report", {
-                    "domain": domain,
-                    "mode": mode,
-                    "node_id": self.node_id,
-                    "reason": reason
-                }, timeout=3)
-            except Exception:
-                pass
-        threading.Thread(target=_worker, daemon=True).start()
+                first_item = self._report_queue.get(timeout=1.0)
+                batch.append(first_item)
+                while len(batch) < 50:
+                    try:
+                        batch.append(self._report_queue.get_nowait())
+                    except queue.Empty:
+                        break
+            except queue.Empty:
+                continue
+
+            if not batch:
+                continue
+
+            payload = {
+                "domains": batch,
+                "node_id": self.node_id
+            }
+
+            # 持续重试直到 Hub 恢复并成功接收入库（绝不丢数）
+            first_fail = True
+            while not self._stop_event.is_set():
+                try:
+                    res = self._post("/api/agent/report", payload, timeout=4)
+                    if res and res.get("code") == 0:
+                        for _ in batch:
+                            self._report_queue.task_done()
+                        break
+                    else:
+                        print(f"[!] 上报可用域名到 Hub 异常: {res}，将在 2 秒后自动重试...")
+                except Exception as e:
+                    if first_fail:
+                        print(f"[*] Hub 当前不可达或正在重启中 ({e})，可用域名已安全暂存本地队列，等待 Hub 恢复后自动补发...")
+                        first_fail = False
+                time.sleep(2.0)
+
+    def flush_reports(self, timeout=5.0):
+        """优雅退出前等待上报队列清空"""
+        start_t = time.time()
+        while not self._report_queue.empty() and (time.time() - start_t < timeout):
+            time.sleep(0.2)
 
 def auto_detect_node_id():
     hname = socket.gethostname().lower()
@@ -300,6 +358,20 @@ def main():
     print("[√] Agent 注册成功！已进入待命状态，等待 Master 下发任务指令...")
 
     current_worker = None
+
+    def graceful_exit(sig=None, frame=None):
+        print(f"\n[!] 收到退出信号，正在安全停止并提交最终数据...")
+        if current_worker and current_worker.is_running:
+            current_worker.stop()
+        client.flush_reports(timeout=4.0)
+        sys.exit(0)
+
+    try:
+        signal.signal(signal.SIGTERM, graceful_exit)
+        signal.signal(signal.SIGINT, graceful_exit)
+    except Exception:
+        pass
+
     try:
         while True:
             resp = client.heartbeat(current_worker)
@@ -318,6 +390,7 @@ def main():
                         if current_worker and current_worker.is_running:
                             print(f"[*] 收到新任务，正在切换停止旧任务 {current_worker.task_id}...")
                             current_worker.stop()
+                            client.flush_reports(timeout=3.0)
                         print(f"\n[🚀 收到 Master 任务指令] 模式: {task_data['mode']}, 分片: {task_data['shard_num']}/{task_data['shard_total']}")
                         current_worker = ScanWorker(task_data, client)
                         current_worker.start()
@@ -326,14 +399,13 @@ def main():
                     if current_worker and current_worker.is_running:
                         print(f"\n[⏹️ 收到 Master 停止指令] 正在停止任务...")
                         current_worker.stop()
+                    client.flush_reports(timeout=3.0)
                     current_worker = None
 
             time.sleep(2.5)
 
     except KeyboardInterrupt:
-        print("\nAgent 退出中...")
-        if current_worker and current_worker.is_running:
-            current_worker.stop()
+        graceful_exit()
 
 if __name__ == "__main__":
     main()
