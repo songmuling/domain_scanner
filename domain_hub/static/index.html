@@ -183,7 +183,13 @@
           <span class="text-base">🖥️</span>
           <h2 class="text-sm font-semibold text-white tracking-wide">已接入 Agent 节点状态 (自动发现与心跳轮询)</h2>
         </div>
-        <span class="text-xs text-slate-400">心跳周期: 2.5s</span>
+        <div class="flex items-center gap-2">
+          <button v-if="offlineNodes.length > 0" @click="cleanOfflineNodes"
+            class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs rounded-lg border border-slate-700 transition flex items-center gap-1">
+            <span>🧹</span> 清理离线 ({{ offlineNodes.length }})
+          </button>
+          <span class="text-xs text-slate-400">心跳周期: 2.5s</span>
+        </div>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
@@ -508,29 +514,54 @@
             </div>
           </div>
 
-          <!-- 节点勾选列表 -->
+          <!-- 节点勾选列表 (严格区分在线与离线节点) -->
           <div>
             <div class="flex items-center justify-between mb-1.5">
-              <label class="text-slate-300 font-medium">选择参与执行的 Agent 节点 (已选 {{ selectedNodeList.length }} 台):</label>
-              <button @click="toggleSelectAllNodes" class="text-indigo-400 hover:text-indigo-300 text-[11px]">
-                {{ selectedNodeList.length === nodes.length ? '取消全选' : '全部勾选' }}
+              <label class="text-slate-300 font-medium">
+                选择参与执行的 Agent 节点 (已选 <b class="text-indigo-400">{{ selectedNodeList.length }}</b> / {{ onlineNodes.length }} 在线台):
+              </label>
+              <button @click="toggleSelectAllOnlineNodes" class="text-indigo-400 hover:text-indigo-300 text-[11px]" :disabled="onlineNodes.length === 0">
+                {{ selectedNodeList.length === onlineNodes.length && onlineNodes.length > 0 ? '取消全选' : '全部勾选在线' }}
               </button>
             </div>
-            <div class="space-y-1.5 max-h-36 overflow-y-auto bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
-              <label v-for="node in nodes" :key="node.node_id"
-                class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/60 cursor-pointer">
+
+            <div class="space-y-1.5 max-h-40 overflow-y-auto bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
+              <!-- 在线可用节点 -->
+              <label v-for="node in onlineNodes" :key="node.node_id"
+                class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/60 cursor-pointer transition">
                 <div class="flex items-center gap-2">
                   <input type="checkbox" :value="node.node_id" v-model="selectedNodeList"
                     class="rounded border-slate-700 text-indigo-600 focus:ring-0">
                   <span class="font-bold text-slate-200">{{ node.node_id }}</span>
-                  <span class="text-[10px] text-slate-500 font-mono">{{ node.ip }}</span>
+                  <span class="text-[10px] text-slate-400 font-mono">{{ node.ip || '内网' }}</span>
                 </div>
-                <div class="text-[11px] text-slate-400">
-                  {{ node.status === 'scanning' ? '⚡ 扫描中' : '🟢 空闲就绪' }}
+                <div class="text-[11px] font-medium"
+                  :class="node.status === 'running' ? 'text-indigo-400' : 'text-emerald-400'">
+                  {{ node.status === 'running' ? '⚡ 正在扫描' : '🟢 在线待命' }}
                 </div>
               </label>
-              <div v-if="nodes.length === 0" class="text-center py-3 text-slate-500 text-xs">
-                暂无在线节点，请先在右上角【接入 Agent】
+
+              <!-- 离线节点展示 (明确标记并禁止勾选) -->
+              <div v-for="node in offlineNodes" :key="node.node_id"
+                class="flex items-center justify-between p-2 rounded-lg bg-slate-900/40 border border-slate-800/50 opacity-50 cursor-not-allowed">
+                <div class="flex items-center gap-2">
+                  <input type="checkbox" disabled
+                    class="rounded border-slate-800 text-slate-600 cursor-not-allowed">
+                  <span class="font-medium text-slate-400">{{ node.node_id }}</span>
+                  <span class="text-[10px] text-slate-600 font-mono">{{ node.ip }}</span>
+                </div>
+                <div class="text-[11px] text-slate-500 flex items-center gap-2">
+                  <span>🔴 离线 ({{ formatIdle(node.idle_sec) }})</span>
+                  <button @click.stop="deleteNode(node.node_id)" class="text-slate-500 hover:text-red-400 text-xs" title="清理离线记录">✕</button>
+                </div>
+              </div>
+
+              <!-- 空状态提示 -->
+              <div v-if="nodes.length === 0" class="text-center py-4 text-slate-500 text-xs">
+                暂无任何节点记录，请先在右上角【接入 Agent】启动客户端
+              </div>
+              <div v-else-if="onlineNodes.length === 0" class="text-center py-2.5 px-3 text-amber-400 text-xs bg-amber-950/20 rounded-lg border border-amber-800/30">
+                ⚠️ 当前所有节点均已离线，无法分配扫描任务！请先启动节点的 Agent 客户端。
               </div>
             </div>
           </div>
@@ -754,8 +785,14 @@
         const isEditingToken = ref(false);
         const newTokenInput = ref('');
 
+        const onlineNodes = computed(() => nodes.value.filter(n => n.status !== 'offline'));
+        const offlineNodes = computed(() => nodes.value.filter(n => n.status === 'offline'));
+
         const canDispatch = computed(() => {
-          return (dispatchForm.value.use_letters || dispatchForm.value.use_digits) && selectedNodeList.value.length > 0;
+          const hasChars = dispatchForm.value.use_letters || dispatchForm.value.use_digits;
+          const hasSelected = selectedNodeList.value.length > 0;
+          const allOnline = selectedNodeList.value.every(id => onlineNodes.value.some(n => n.node_id === id));
+          return hasChars && hasSelected && allOnline;
         });
 
         const estimatedTotal = computed(() => {
@@ -898,12 +935,37 @@
             const data = await res.json();
             if (data.code === 0) {
               nodes.value = data.data;
-              // 首次默认勾选所有在线节点
+              const onlineIds = nodes.value.filter(n => n.status !== 'offline').map(n => n.node_id);
               if (selectedNodeList.value.length === 0) {
-                selectedNodeList.value = nodes.value.map(n => n.node_id);
+                selectedNodeList.value = [...onlineIds];
+              } else {
+                selectedNodeList.value = selectedNodeList.value.filter(id => onlineIds.includes(id));
               }
             }
           } catch (e) { console.error('fetchNodes err', e); }
+        };
+
+        const toggleSelectAllOnlineNodes = () => {
+          const onlineIds = onlineNodes.value.map(n => n.node_id);
+          if (selectedNodeList.value.length === onlineIds.length) {
+            selectedNodeList.value = [];
+          } else {
+            selectedNodeList.value = [...onlineIds];
+          }
+        };
+
+        const cleanOfflineNodes = async () => {
+          if (!confirm(`确定清理全部 ${offlineNodes.value.length} 个离线 Agent 历史记录吗？`)) return;
+          try {
+            const res = await fetch('/api/nodes/clean_offline', { method: 'POST' });
+            const data = await res.json();
+            if (data.code === 0) {
+              showToast(data.msg);
+              fetchNodes();
+            }
+          } catch (e) {
+            showToast('清理失败');
+          }
         };
 
         const fetchToken = async () => {
@@ -941,17 +1003,11 @@
           }
         };
 
-        const toggleSelectAllNodes = () => {
-          if (selectedNodeList.value.length === nodes.value.length) {
-            selectedNodeList.value = [];
-          } else {
-            selectedNodeList.value = nodes.value.map(n => n.node_id);
-          }
-        };
-
         const submitDispatch = async () => {
-          if (selectedNodeList.value.length === 0) {
-            showToast('请至少选择一个节点');
+          const onlineIds = onlineNodes.value.map(n => n.node_id);
+          const validSelected = selectedNodeList.value.filter(id => onlineIds.includes(id));
+          if (validSelected.length === 0) {
+            showToast('请至少勾选一个处于在线就绪状态的 Agent 节点');
             return;
           }
           if (!dispatchForm.value.use_letters && !dispatchForm.value.use_digits) {
@@ -970,7 +1026,7 @@
                 use_hyphen: dispatchForm.value.use_hyphen,
                 suffix: dispatchForm.value.suffix,
                 threads: dispatchForm.value.threads,
-                nodes: selectedNodeList.value
+                nodes: validSelected
               })
             });
             const data = await res.json();
@@ -1110,7 +1166,8 @@
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
           prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
-          openDispatchModal, dispatching, dispatchForm, selectedNodeList, toggleSelectAllNodes,
+          openDispatchModal, dispatching, dispatchForm, selectedNodeList,
+          onlineNodes, offlineNodes, toggleSelectAllOnlineNodes, cleanOfflineNodes,
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
           activeAgentTab, isEditingToken, newTokenInput,
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,

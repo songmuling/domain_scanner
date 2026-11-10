@@ -706,6 +706,24 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_json({"code": 1, "msg": "必须至少勾选一个在线节点"}, 400)
                 return
 
+            # 严格校验：选中的节点必须均处于在线状态 (35 秒内有心跳)
+            with get_db() as conn:
+                cur = conn.cursor()
+                placeholders = ",".join("?" * len(selected_nodes))
+                cur.execute(f"""
+                SELECT node_id, (strftime('%s', 'now') - strftime('%s', last_seen)) as idle_sec
+                FROM nodes WHERE node_id IN ({placeholders});
+                """, selected_nodes)
+                node_map = {row["node_id"]: (row["idle_sec"] if row["idle_sec"] is not None else 999999) for row in cur.fetchall()}
+
+            offline_nodes = [nid for nid in selected_nodes if nid not in node_map or node_map[nid] > 35]
+            if offline_nodes:
+                self.send_json({
+                    "code": 1,
+                    "msg": f"下发失败：节点 【{', '.join(offline_nodes)}】 当前处于离线状态！请先启动其 Agent 或取消勾选该节点。"
+                }, 400)
+                return
+
             # 推导标准模式名称，与资产库展示完全统一
             if use_letters and use_digits:
                 type_name = "mix"
@@ -789,6 +807,14 @@ class HubHandler(BaseHTTPRequestHandler):
                     conn.execute("DELETE FROM nodes WHERE node_id = ?;", (node_id,))
                     conn.commit()
             self.send_json({"code": 0, "msg": "节点记录已清理"})
+            return
+
+        # 3.1 一键清理所有离线节点记录
+        if path == "/api/nodes/clean_offline":
+            with get_db() as conn:
+                conn.execute("DELETE FROM nodes WHERE (strftime('%s', 'now') - strftime('%s', last_seen)) > 35;")
+                conn.commit()
+            self.send_json({"code": 0, "msg": "已清理所有离线节点历史记录"})
             return
 
         # 4. 重置 / 生成新 Token

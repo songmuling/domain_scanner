@@ -198,3 +198,4 @@ def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_do
             }, f, indent=2)
     except Exception:
         pass
+
