@@ -167,12 +167,13 @@
       </div>
 
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
-        <div class="text-xs font-medium text-slate-400">模式资产分布</div>
+        <div class="text-xs font-medium text-slate-400">模式资产分布 (点击直达筛选)</div>
         <div class="text-xs text-slate-300 mt-2 flex flex-wrap gap-1.5">
-          <span v-for="(cnt, m) in stats.mode_stats" :key="m"
-            class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-[10px]">
+          <button v-for="(cnt, m) in stats.mode_stats" :key="m" @click="selectModeFromStats(m)"
+            class="px-1.5 py-0.5 bg-slate-800 hover:bg-indigo-900/60 hover:border-indigo-500 rounded border border-slate-700 text-[10px] transition cursor-pointer"
+            :title="'快速筛选 ' + m">
             {{ m }}: <b class="text-white">{{ cnt }}</b>
-          </span>
+          </button>
         </div>
       </div>
     </div>
@@ -262,30 +263,104 @@
 
     <!-- 域名探索与资产库控制台 -->
     <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
-      <!-- 标签栏与模式切换 -->
+      <!-- 标签栏与操作栏 -->
       <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-        <div class="flex items-center space-x-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+        <div class="flex items-center space-x-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 overflow-x-auto">
           <button v-for="tab in statusTabs" :key="tab.id" @click="currentStatus = tab.id; page = 1; fetchDomains()"
             :class="currentStatus === tab.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'"
-            class="px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
+            class="px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 whitespace-nowrap">
             <span>{{ tab.icon }}</span>
             <span>{{ tab.label }}</span>
           </button>
         </div>
 
-        <div class="flex items-center space-x-1.5 overflow-x-auto text-xs py-1">
-          <button v-for="m in modeOptions" :key="m.id" @click="currentMode = m.id; page = 1; fetchDomains()"
-            :class="currentMode === m.id ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800/60 text-slate-400 border-slate-800 hover:bg-slate-800'"
-            class="px-2.5 py-1 rounded-lg border transition whitespace-nowrap">
-            {{ m.label }}
+        <div class="flex items-center gap-2">
+          <button @click="openBatchRecheckModal = true"
+            class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 text-xs font-medium shadow-sm">
+            <span>🔄 存量资产批量复验</span>
+          </button>
+          <button @click="exportCurrent"
+            class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition flex items-center gap-1 text-xs font-medium">
+            <span>📤 导出当前清单</span>
           </button>
         </div>
       </div>
 
-      <!-- 筛选工具栏 -->
+      <!-- 核心三维度筛选栏 (与新建任务规则完全对齐) -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
+        <div class="flex flex-wrap items-center gap-3 sm:gap-4 text-xs">
+          <!-- 1. 字符位数 -->
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
+              <span>📏</span> 位数:
+            </span>
+            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
+              <button v-for="opt in lengthFilterOptions" :key="opt.value"
+                @click="filterLength = opt.value; currentMode = ''; page = 1; fetchDomains()"
+                :class="filterLength === opt.value ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 2. 字符组成 -->
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
+              <span>🔤</span> 字符:
+            </span>
+            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
+              <button v-for="opt in charTypeFilterOptions" :key="opt.value"
+                @click="filterCharType = opt.value; currentMode = ''; page = 1; fetchDomains()"
+                :class="filterCharType === opt.value ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                {{ opt.label }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 3. 连字符设置 (二选一) -->
+          <div class="flex items-center gap-1.5">
+            <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
+              <span>➖</span> 连字符:
+            </span>
+            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
+              <button @click="filterHyphen = '1'; currentMode = ''; page = 1; fetchDomains()"
+                :class="filterHyphen === '1' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                包含 “-”
+              </button>
+              <button @click="filterHyphen = '0'; currentMode = ''; page = 1; fetchDomains()"
+                :class="filterHyphen === '0' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
+                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
+                不含 “-”
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 筛选摘要与重置按钮 -->
+        <div class="flex items-center gap-2 text-xs">
+          <div v-if="hasActiveFilter" class="flex items-center gap-2">
+            <span class="text-[11px] text-slate-400">当前条件:</span>
+            <span class="font-mono text-indigo-300 font-bold text-xs px-2.5 py-0.5 bg-indigo-950/80 rounded-md border border-indigo-800/60 shadow-sm">
+              {{ activeFilterSummary }}
+            </span>
+            <button @click="resetFilters"
+              class="px-2 py-0.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition flex items-center gap-1">
+              <span>↺</span> 重置
+            </button>
+          </div>
+          <div v-else class="text-[11px] text-slate-500">
+            全部组合模式 (全量)
+          </div>
+        </div>
+      </div>
+
+      <!-- 筛选工具栏 (搜索、前后缀、元音及声母) -->
       <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-        <div class="md:col-span-4 relative">
-          <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()" placeholder="🔍 搜索域名、前缀、后缀 (回车查询)..."
+        <div class="md:col-span-5 relative">
+          <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()" placeholder="🔍 搜索域名、包含关键字 (回车查询)..."
             class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
         </div>
 
@@ -296,21 +371,16 @@
             class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
         </div>
 
-        <div class="md:col-span-5 flex flex-wrap items-center justify-end gap-2 text-xs">
-          <button @click="openBatchRecheckModal = true"
-            class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 font-medium shadow-sm">
-            <span>🔄 存量资产批量复验</span>
-          </button>
-
+        <div class="md:col-span-4 flex flex-wrap items-center justify-end gap-2 text-xs">
           <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
             :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
-            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1">
+            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-medium">
             <span>🔤 包含元音 (可读)</span>
           </button>
 
           <button @click="excludeRare = !excludeRare; page = 1; fetchDomains()"
             :class="excludeRare ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
-            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1">
+            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-medium">
             <span>🚫 剔除声母 q/x/z/v</span>
           </button>
         </div>
@@ -431,16 +501,19 @@
 
     <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher - 自由定义位数与规则) -->
     <div v-if="openDispatchModal"
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+      @click.self="openDispatchModal = false"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
+        <!-- 固定顶部标题栏 -->
+        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
             <span>🚀</span> 新建并分发集群扫描任务
           </h3>
-          <button @click="openDispatchModal = false" class="text-slate-400 hover:text-white">✕</button>
+          <button @click="openDispatchModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
         </div>
 
-        <div class="space-y-3.5 text-xs">
+        <!-- 内部独立滚动区域 -->
+        <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
           <!-- 自定义位数 (3~5 位) -->
           <div>
             <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 5 位):</label>
@@ -601,7 +674,8 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+        <!-- 固定底部按钮栏 -->
+        <div class="flex items-center justify-end gap-3 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
           <button @click="openDispatchModal = false"
             class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">取消</button>
           <button @click="submitDispatch" :disabled="dispatching || !canDispatch"
@@ -614,16 +688,17 @@
 
     <!-- 模态框 2：Agent 接入指南与部署模板切换 -->
     <div v-if="openTokenModal"
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl p-5 space-y-4 shadow-2xl">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+      @click.self="openTokenModal = false"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
+        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
             <span>🤖</span> 接入 Agent 扫描节点
           </h3>
-          <button @click="openTokenModal = false" class="text-slate-400 hover:text-white">✕</button>
+          <button @click="openTokenModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
         </div>
 
-        <div class="space-y-4 text-xs">
+        <div class="overflow-y-auto p-4 space-y-4 text-xs flex-1">
           <!-- Token 展示与修改区 -->
           <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800">
             <div class="flex items-center justify-between mb-1">
@@ -697,23 +772,27 @@
             </div>
 
             <!-- Tab 2: Docker Compose -->
-            <div v-if="activeAgentTab === 'docker_compose'"
-              class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-0.5">
-              <div>version: '3.8'</div>
-              <div>services:</div>
-              <div class="pl-2">domain-agent:</div>
-              <div class="pl-4">image: domain-agent:latest</div>
-              <div class="pl-4">container_name: domain-agent</div>
-              <div class="pl-4">restart: unless-stopped</div>
-              <div class="pl-4">network_mode: host</div>
-              <div class="pl-4">environment:</div>
-              <div class="pl-6">- HUB_URL=http://192.168.200.12:8088</div>
-              <div class="pl-6">- HUB_TOKEN={{ clusterToken }}</div>
-              <div class="pl-6">- NODE_ID=My-Node-Name</div>
-              <button @click="copyComposeYaml"
-                class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
-                一键复制
-              </button>
+            <div v-if="activeAgentTab === 'docker_compose'" class="space-y-2">
+              <div class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-0.5">
+                <div>version: '3.8'</div>
+                <div>services:</div>
+                <div class="pl-2">domain-agent:</div>
+                <div class="pl-4">image: domain-agent:latest</div>
+                <div class="pl-4">container_name: domain-agent</div>
+                <div class="pl-4">restart: unless-stopped</div>
+                <div class="pl-4">network_mode: host</div>
+                <div class="pl-4">environment:</div>
+                <div class="pl-6">- HUB_URL=${HUB_URL:-http://192.168.200.12:8088}</div>
+                <div class="pl-6">- HUB_TOKEN=${HUB_TOKEN:-{{ clusterToken }}}</div>
+                <div class="pl-6">- NODE_ID=${NODE_ID:-My-Node-Name}</div>
+                <button @click="copyComposeYaml"
+                  class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
+                  一键复制
+                </button>
+              </div>
+              <div class="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded-lg border border-slate-800">
+                💡 支持 .env 自动注入：在 agent 目录下执行 <code class="text-indigo-300 font-mono">cp .env.sample .env</code>，按需填写参数后直接 <code class="text-emerald-400 font-mono">docker compose up -d</code> 即可！
+              </div>
             </div>
 
             <!-- Tab 3: Python 脚本直接运行 (OpenWrt / 软路由) -->
@@ -729,60 +808,65 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-end pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-end p-4 border-t border-slate-800 shrink-0 bg-slate-900">
           <button @click="openTokenModal = false"
-            class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg">关闭</button>
+            class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg transition">关闭</button>
         </div>
       </div>
     </div>
 
     <!-- 模态框 3：导入历史 TXT -->
     <div v-if="openImportModal"
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
-        <div class="flex items-center justify-between">
+      @click.self="openImportModal = false"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
+        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
             <span>📥</span> 批量导入历史可用域名
           </h3>
-          <button @click="openImportModal = false" class="text-slate-400 hover:text-white">✕</button>
+          <button @click="openImportModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
         </div>
 
-        <textarea v-model="importText" rows="8" placeholder="每行一个域名，例如：&#10;a-bw.com&#10;ai-x.com"
-          class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
+        <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
+          <textarea v-model="importText" rows="8" placeholder="每行一个域名，例如：&#10;a-bw.com&#10;ai-x.com"
+            class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
 
-        <div class="flex items-center justify-between">
-          <select v-model="importMode"
-            class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
-            <option value="">自动推断模式</option>
-            <option value="4letter-">4letter-</option>
-            <option value="4mix-">4mix-</option>
-            <option value="3letter-">3letter-</option>
-            <option value="5letter">5letter</option>
-          </select>
-          <div class="flex items-center space-x-2">
-            <button @click="openImportModal = false"
-              class="px-3 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
-            <button @click="submitImport" :disabled="importing || !importText.trim()"
-              class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg shadow transition">
-              {{ importing ? '正在导入...' : '立即导入' }}
-            </button>
+          <div class="flex items-center justify-between">
+            <select v-model="importMode"
+              class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
+              <option value="">自动推断模式</option>
+              <option value="4letter-">4letter-</option>
+              <option value="4mix-">4mix-</option>
+              <option value="3letter-">3letter-</option>
+              <option value="5letter">5letter</option>
+            </select>
           </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-2 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
+          <button @click="openImportModal = false"
+            class="px-3 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
+          <button @click="submitImport" :disabled="importing || !importText.trim()"
+            class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg shadow transition">
+            {{ importing ? '正在导入...' : '立即导入' }}
+          </button>
         </div>
       </div>
     </div>
 
     <!-- 模态框 4：存量资产权威批量复验 -->
     <div v-if="openBatchRecheckModal"
-      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+      @click.self="openBatchRecheckModal = false"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
+        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
             <span>🔄</span> 存量可用资产批量权威复验
           </h3>
-          <button @click="openBatchRecheckModal = false" class="text-slate-400 hover:text-white">✕</button>
+          <button @click="openBatchRecheckModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
         </div>
 
-        <div class="space-y-4 text-xs">
+        <div class="overflow-y-auto p-4 space-y-4 text-xs flex-1">
           <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
             <div class="text-slate-300 font-medium">复验模式与范围:</div>
             <div class="text-slate-400 text-[11px] leading-relaxed">
@@ -793,8 +877,8 @@
               <select v-model="batchRecheckScope" :disabled="batchRecheckState.is_running"
                 class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs">
                 <option value="all">全部模式的所有存量可用域名</option>
-                <option v-for="m in modeOptions.filter(x => x.id !== 'all')" :key="m.id" :value="m.id">
-                  仅复验模式: {{ m.label }}
+                <option v-for="(cnt, m) in stats.mode_stats" :key="m" :value="m">
+                  仅复验模式: {{ m }} ({{ cnt }} 个可用)
                 </option>
               </select>
             </div>
@@ -826,7 +910,7 @@
           </div>
         </div>
 
-        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+        <div class="flex items-center justify-end gap-3 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
           <button @click="openBatchRecheckModal = false"
             class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">关闭</button>
           <button v-if="batchRecheckState.is_running" @click="stopBatchRecheck"
@@ -866,7 +950,82 @@
         const limit = ref(50);
 
         const currentStatus = ref('available');
-        const currentMode = ref('all');
+        const currentMode = ref('');
+        const filterLength = ref('');
+        const filterCharType = ref('');
+        const filterHyphen = ref('1');
+
+        const lengthFilterOptions = [
+          { value: '', label: '全部' },
+          { value: '3', label: '3 位' },
+          { value: '4', label: '4 位' },
+          { value: '5', label: '5 位' }
+        ];
+
+        const charTypeFilterOptions = [
+          { value: '', label: '全部' },
+          { value: 'letter', label: '纯字母' },
+          { value: 'num', label: '纯数字' },
+          { value: 'mix', label: '字母+数字' }
+        ];
+
+        const hasActiveFilter = computed(() => {
+          return Boolean(filterLength.value || filterCharType.value || filterHyphen.value !== '1' || (currentMode.value && currentMode.value !== 'all'));
+        });
+
+        const activeFilterSummary = computed(() => {
+          if (!hasActiveFilter.value) return '全部组合 (带杠)';
+          if (currentMode.value && currentMode.value !== 'all' && !filterLength.value && !filterCharType.value) {
+            return currentMode.value;
+          }
+          const parts = [];
+          if (filterLength.value) parts.push(`${filterLength.value}位`);
+          if (filterCharType.value === 'letter') parts.push('纯字母');
+          else if (filterCharType.value === 'num') parts.push('纯数字');
+          else if (filterCharType.value === 'mix') parts.push('混合');
+
+          if (filterHyphen.value === '1') parts.push('含杠(-)');
+          else if (filterHyphen.value === '0') parts.push('无杠');
+
+          let code = '';
+          if (filterLength.value && filterCharType.value) {
+            code = ` (${filterLength.value}${filterCharType.value}${filterHyphen.value === '1' ? '-' : ''})`;
+          }
+          return parts.join(' · ') + code;
+        });
+
+        const resetFilters = () => {
+          filterLength.value = '';
+          filterCharType.value = '';
+          filterHyphen.value = '1';
+          currentMode.value = '';
+          searchKeyword.value = '';
+          prefixFilter.value = '';
+          suffixFilter.value = '';
+          hasVowel.value = false;
+          excludeRare.value = false;
+          page.value = 1;
+          fetchDomains();
+        };
+
+        const selectModeFromStats = (m) => {
+          if (!m) return;
+          const match = m.match(/^(\d+)(letter|mix|num)(-?)$/);
+          if (match) {
+            filterLength.value = match[1];
+            filterCharType.value = match[2];
+            filterHyphen.value = match[3] === '-' ? '1' : '0';
+            currentMode.value = '';
+          } else {
+            filterLength.value = '';
+            filterCharType.value = '';
+            filterHyphen.value = '';
+            currentMode.value = m;
+          }
+          page.value = 1;
+          fetchDomains();
+        };
+
         const searchKeyword = ref('');
         const prefixFilter = ref('');
         const suffixFilter = ref('');
@@ -987,7 +1146,7 @@
         };
 
         const copyComposeYaml = () => {
-          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: domain-agent:latest\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    environment:\n      - HUB_URL=http://192.168.200.12:8088\n      - HUB_TOKEN=${clusterToken.value}\n      - NODE_ID=My-Node-Name\n`);
+          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: domain-agent:latest\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    environment:\n      - HUB_URL=\${HUB_URL:-http://192.168.200.12:8088}\n      - HUB_TOKEN=\${HUB_TOKEN:-${clusterToken.value}}\n      - NODE_ID=\${NODE_ID:-My-Node-Name}\n`);
         };
 
         const copyPythonCmd = () => {
@@ -1099,6 +1258,9 @@
             const params = new URLSearchParams({
               status: currentStatus.value,
               mode: currentMode.value,
+              length: filterLength.value,
+              char_type: filterCharType.value,
+              has_hyphen: filterHyphen.value,
               page: page.value,
               limit: limit.value,
               q: searchKeyword.value,
@@ -1298,8 +1460,19 @@
         };
 
         const exportCurrent = () => {
-          const url = `/api/export?mode=${currentMode.value}&status=${currentStatus.value}`;
-          window.open(url, '_blank');
+          const params = new URLSearchParams({
+            status: currentStatus.value,
+            mode: currentMode.value,
+            length: filterLength.value,
+            char_type: filterCharType.value,
+            has_hyphen: filterHyphen.value,
+            q: searchKeyword.value,
+            prefix: prefixFilter.value,
+            suffix: suffixFilter.value,
+            has_vowel: hasVowel.value ? '1' : '0',
+            exclude_rare: excludeRare.value ? '1' : '0'
+          });
+          window.open(`/api/export?${params.toString()}`, '_blank');
         };
 
         const refreshAll = () => {
@@ -1309,7 +1482,17 @@
           fetchToken();
         };
 
+        const handleKeyDown = (e) => {
+          if (e.key === 'Escape') {
+            openDispatchModal.value = false;
+            openTokenModal.value = false;
+            openImportModal.value = false;
+            openBatchRecheckModal.value = false;
+          }
+        };
+
         onMounted(() => {
+          window.addEventListener('keydown', handleKeyDown);
           refreshAll();
           setInterval(() => {
             fetchStats();
@@ -1324,6 +1507,8 @@
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
           prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
+          filterLength, filterCharType, filterHyphen, lengthFilterOptions, charTypeFilterOptions,
+          hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList,
           onlineNodes, offlineNodes, toggleSelectAllOnlineNodes, cleanOfflineNodes,
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,

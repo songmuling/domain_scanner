@@ -284,6 +284,73 @@ def start_batch_recheck(mode="all"):
     threading.Thread(target=_worker, daemon=True).start()
     return True, f"已启动对 {len(target_domains)} 个存量域名的权威复验"
 
+def build_domain_filters(params):
+    mode = params.get("mode", [""])[0]
+    status = params.get("status", ["available"])[0]
+    search = params.get("q", [""])[0].strip().lower()
+    has_vowel = params.get("has_vowel", ["0"])[0] == "1"
+    exclude_rare = params.get("exclude_rare", ["0"])[0] == "1"
+    prefix = params.get("prefix", [""])[0].strip().lower()
+    suffix = params.get("suffix", [""])[0].strip().lower()
+
+    length_param = params.get("length", [""])[0].strip()
+    char_type_param = params.get("char_type", [""])[0].strip()
+    has_hyphen_param = params.get("has_hyphen", [""])[0].strip()
+
+    where_clauses = []
+    bind_params = []
+
+    if status != "all":
+        where_clauses.append("status = ?")
+        bind_params.append(status)
+
+    # 1. 字符位数维度 (支持按模式代号如 4letter-、去除连字符纯字符数、或总字符数智能匹配)
+    if length_param.isdigit():
+        l_val = int(length_param)
+        where_clauses.append("(mode LIKE ? OR length(substr(domain, 1, instr(domain, '.') - 1)) = ? OR length(replace(substr(domain, 1, instr(domain, '.') - 1), '-', '')) = ?)")
+        bind_params.extend([f"{l_val}%", l_val, l_val])
+
+    # 2. 字符组成维度 (纯字母 / 纯数字 / 字母+数字混合)
+    if char_type_param == "letter":
+        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[0-9]*'")
+    elif char_type_param == "num":
+        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[0-9]*' AND substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[a-z]*'")
+    elif char_type_param == "mix":
+        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[0-9]*' AND substr(domain, 1, instr(domain, '.') - 1) GLOB '*[a-z]*'")
+
+    # 3. 连字符维度 (含连字符 “-” / 不含连字符)
+    if has_hyphen_param == "1":
+        where_clauses.append("domain LIKE '%-%'")
+    elif has_hyphen_param == "0":
+        where_clauses.append("domain NOT LIKE '%-%'")
+
+    # 兼容历史 mode 传参 (若未指定三维度，但指定了具体 mode)
+    if not length_param and not char_type_param and not has_hyphen_param and mode and mode != "all":
+        where_clauses.append("mode = ?")
+        bind_params.append(mode)
+
+    # 4. 关键字及前后缀
+    if search:
+        where_clauses.append("domain LIKE ?")
+        bind_params.append(f"%{search}%")
+
+    if prefix:
+        where_clauses.append("domain LIKE ?")
+        bind_params.append(f"{prefix}%")
+
+    if suffix:
+        where_clauses.append("domain LIKE ?")
+        bind_params.append(f"%{suffix}.com")
+
+    # 5. 淘金规则：包含元音 / 剔除生僻声母
+    if has_vowel:
+        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[aeiou]*'")
+    if exclude_rare:
+        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[qxzvy]*'")
+
+    where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+    return where_sql, bind_params
+
 class HubHandler(BaseHTTPRequestHandler):
     server_version = "DomainHub-Master/2.0"
 
@@ -489,42 +556,11 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # 6. 域名分页与智能筛选 API
         if path == "/api/domains":
-            mode = params.get("mode", [""])[0]
-            status = params.get("status", ["available"])[0]
-            search = params.get("q", [""])[0].strip().lower()
-            has_vowel = params.get("has_vowel", ["0"])[0] == "1"
-            exclude_rare = params.get("exclude_rare", ["0"])[0] == "1"
-            prefix = params.get("prefix", [""])[0].strip().lower()
-            suffix = params.get("suffix", [""])[0].strip().lower()
+            where_sql, bind_params = build_domain_filters(params)
 
             page = max(1, int(params.get("page", ["1"])[0]))
             limit = min(200, max(10, int(params.get("limit", ["50"])[0])))
             offset = (page - 1) * limit
-
-            where_clauses = []
-            bind_params = []
-
-            if status != "all":
-                where_clauses.append("status = ?")
-                bind_params.append(status)
-
-            if mode and mode != "all":
-                where_clauses.append("mode = ?")
-                bind_params.append(mode)
-
-            if search:
-                where_clauses.append("domain LIKE ?")
-                bind_params.append(f"%{search}%")
-
-            if prefix:
-                where_clauses.append("domain LIKE ?")
-                bind_params.append(f"{prefix}%")
-
-            if suffix:
-                where_clauses.append("domain LIKE ?")
-                bind_params.append(f"%{suffix}.com")
-
-            where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
             with get_db() as conn:
                 cur = conn.cursor()
@@ -541,51 +577,31 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 raw_domains = [dict(row) for row in cur.fetchall()]
 
-            filtered = []
-            vowels = set("aeiou")
-            rare_letters = set("qxzvy")
-            for item in raw_domains:
-                name_prefix = item["domain"].split(".")[0].replace("-", "")
-                if has_vowel and not any(c in vowels for c in name_prefix):
-                    continue
-                if exclude_rare and any(c in rare_letters for c in name_prefix):
-                    continue
-                filtered.append(item)
-
             self.send_json({
                 "code": 0,
                 "data": {
                     "total": total_count,
                     "page": page,
                     "limit": limit,
-                    "list": filtered
+                    "list": raw_domains
                 }
             })
             return
 
         # 7. 导出 API
         if path == "/api/export":
-            mode = params.get("mode", ["all"])[0]
+            where_sql, bind_params = build_domain_filters(params)
             status = params.get("status", ["available"])[0]
-            where = []
-            args = []
-            if mode != "all":
-                where.append("mode = ?")
-                args.append(mode)
-            if status != "all":
-                where.append("status = ?")
-                args.append(status)
 
-            w_sql = ("WHERE " + " AND ".join(where)) if where else ""
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute(f"SELECT domain FROM domains {w_sql} ORDER BY domain ASC;", args)
+                cur.execute(f"SELECT domain FROM domains {where_sql} ORDER BY domain ASC;", bind_params)
                 lines = [r[0] for r in cur.fetchall()]
 
             content = "\n".join(lines).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Disposition", f'attachment; filename="export_{mode}_{status}.txt"')
+            self.send_header("Content-Disposition", f'attachment; filename="domains_export_{status}_{len(lines)}.txt"')
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
