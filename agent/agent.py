@@ -41,9 +41,15 @@ class ScanWorker:
         self.task_id = task_info["task_id"]
         self.mode = task_info["mode"]
         self.suffix = task_info.get("suffix", "com")
-        self.shard_num = task_info["shard_num"]
-        self.shard_total = task_info["shard_total"]
+        self.shard_num = task_info.get("shard_num", 1)
+        self.shard_total = task_info.get("shard_total", 1)
         self.threads = task_info.get("threads", 25)
+
+        # 尾部援助分流字段 (Work-Stealing)
+        self.is_aid = bool(task_info.get("is_aid", False))
+        self.aid_for = task_info.get("aid_for", "")
+        self.start_idx = task_info.get("start_idx")
+        self.end_idx = task_info.get("end_idx")
 
         self.is_running = False
         self.is_completed = False
@@ -57,6 +63,14 @@ class ScanWorker:
         self._last_time = time.time()
         self._last_count = 0
 
+    def update_end_idx(self, new_end_idx, new_total):
+        """当 Master 告知尾部任务已被集群其他空闲节点接力援助时，动态缩减当前分片的截止线"""
+        if new_total < self.total:
+            old_total = self.total
+            self.end_idx = new_end_idx
+            self.total = new_total
+            print(f"\n[🤝 尾部援助生效] 任务 {self.task_id} 尾部已被集群空闲算力接力分流！当前分片目标总量从 {old_total:,} 缩减至 {self.total:,}")
+
     def start(self):
         self.is_running = True
         self.stop_requested = False
@@ -67,9 +81,6 @@ class ScanWorker:
         self.stop_requested = True
 
     def _run(self):
-        canonical_shard = f"{self.shard_num}/{self.shard_total}"
-        shard_idx = self.shard_num - 1
-
         # 解析任务规则 (支持全自定义规则与旧版模式名称)
         if "length" in self.task_info:
             length = int(self.task_info["length"])
@@ -80,12 +91,26 @@ class ScanWorker:
             length, use_letters, use_digits, use_hyphen = scanner.parse_mode_string(self.mode)
 
         total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
-        start_idx = (shard_idx * total_all) // self.shard_total
-        end_idx = ((shard_idx + 1) * total_all) // self.shard_total
-        self.total = end_idx - start_idx
+
+        if self.start_idx is not None and self.end_idx is not None:
+            start_idx = self.start_idx
+            end_idx = self.end_idx
+            self.total = end_idx - start_idx
+            canonical_shard = f"援助 {self.aid_for}" if self.is_aid else f"{start_idx}-{end_idx}"
+        else:
+            canonical_shard = f"{self.shard_num}/{self.shard_total}"
+            shard_idx = self.shard_num - 1
+            start_idx = (shard_idx * total_all) // self.shard_total
+            end_idx = ((shard_idx + 1) * total_all) // self.shard_total
+            self.start_idx = start_idx
+            self.end_idx = end_idx
+            self.total = end_idx - start_idx
 
         # 断点存盘与重跑逻辑
-        clean_shard = canonical_shard.replace("/", "_")
+        if self.is_aid:
+            clean_shard = f"aid_{self.task_id}_{start_idx}_{end_idx}"
+        else:
+            clean_shard = canonical_shard.replace("/", "_")
         ckpt_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
 
         reset_ckpt = bool(self.task_info.get("reset_checkpoint", False))
@@ -114,7 +139,7 @@ class ScanWorker:
                         d, r = str(item), "404 未注册"
                     self.hub.report_domain(d, self.mode, r)
 
-        generator = scanner.get_sharded_generator(length, use_letters, use_digits, use_hyphen, self.suffix, shard_idx, self.shard_total)
+        generator = scanner.get_range_generator(length, use_letters, use_digits, use_hyphen, self.suffix, start_idx, end_idx)
         skipping = bool(last_ckpt)
 
         start_time = time.time()
@@ -132,6 +157,11 @@ class ScanWorker:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.threads) as executor:
                 for domain in generator:
                     if self.stop_requested:
+                        break
+
+                    # 动态截止检查：如果已核查数量达到（或超过）缩减后的 total，提前完成！
+                    if self.checked_count >= self.total:
+                        print(f"\n[*] 当前分片已达到缩减后的目标总量 ({self.checked_count:,} / {self.total:,})，提前顺利收官！")
                         break
 
                     if skipping:
@@ -239,7 +269,7 @@ class HubClient:
             status = "running"
             task_id = worker.task_id
             mode = worker.mode
-            shard = f"{worker.shard_num}/{worker.shard_total}"
+            shard = f"援助 {worker.aid_for}" if worker.is_aid else f"{worker.shard_num}/{worker.shard_total}"
             scanned = worker.checked_count
             total = worker.total
             speed = worker.speed
@@ -248,7 +278,7 @@ class HubClient:
             status = "completed"
             task_id = worker.task_id
             mode = worker.mode
-            shard = f"{worker.shard_num}/{worker.shard_total}"
+            shard = f"援助 {worker.aid_for}" if worker.is_aid else f"{worker.shard_num}/{worker.shard_total}"
             scanned = worker.checked_count
             total = worker.total
             speed = 0.0
@@ -391,6 +421,13 @@ def main():
         while True:
             resp = client.heartbeat(current_worker)
             if resp and resp.get("code") == 0:
+                # 检查 Master 是否下发了动态缩容/尾部援助截取通知
+                if "trimmed_total" in resp and current_worker and current_worker.is_running:
+                    trimmed_total = resp.get("trimmed_total")
+                    trimmed_end_idx = resp.get("trimmed_end_idx")
+                    if trimmed_total is not None and trimmed_total < current_worker.total:
+                        current_worker.update_end_idx(trimmed_end_idx, trimmed_total)
+
                 cmd = resp.get("command", "IDLE")
                 task_data = resp.get("task")
 
@@ -406,7 +443,10 @@ def main():
                             print(f"[*] 收到新任务，正在切换停止旧任务 {current_worker.task_id}...")
                             current_worker.stop()
                             client.flush_reports(timeout=3.0)
-                        print(f"\n[🚀 收到 Master 任务指令] 模式: {task_data['mode']}, 分片: {task_data['shard_num']}/{task_data['shard_total']}")
+                        if task_data.get("is_aid"):
+                            print(f"\n[🤝 收到 Master 尾部接力援助指令] 为节点 {task_data.get('aid_for')} 分流扫描区间 [{task_data.get('start_idx')}-{task_data.get('end_idx')}]，共 {task_data.get('total'):,} 个域名")
+                        else:
+                            print(f"\n[🚀 收到 Master 任务指令] 模式: {task_data['mode']}, 分片: {task_data['shard_num']}/{task_data['shard_total']}")
                         current_worker = ScanWorker(task_data, client)
                         current_worker.start()
 

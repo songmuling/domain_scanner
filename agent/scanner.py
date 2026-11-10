@@ -111,12 +111,20 @@ def parse_mode_string(mode_str):
 
     return length, use_letters, use_digits, use_hyphen
 
+def get_range_generator(length, use_letters, use_digits, use_hyphen, suffix, start_idx, end_idx):
+    """
+    通用数学区间生成器：按绝对全局索引 [start_idx, end_idx) 生成域名
+    用于多机细粒度工作窃取 (Work-Stealing) 与尾部援助分流
+    """
+    chars = get_char_pool(use_letters, use_digits)
+    for idx in range(start_idx, end_idx):
+        yield generate_domain(idx, length, chars, use_hyphen, suffix)
+
 def get_sharded_generator(length, use_letters, use_digits, use_hyphen, suffix, shard_idx, shard_total):
     """
     获取当前节点的分片生成器
     shard_idx: 0 到 shard_total-1
     """
-    chars = get_char_pool(use_letters, use_digits)
     total = calc_total(length, use_letters, use_digits, use_hyphen)
     if total == 0 or shard_total <= 0:
         return
@@ -124,8 +132,7 @@ def get_sharded_generator(length, use_letters, use_digits, use_hyphen, suffix, s
     start_idx = (shard_idx * total) // shard_total
     end_idx = ((shard_idx + 1) * total) // shard_total
 
-    for idx in range(start_idx, end_idx):
-        yield generate_domain(idx, length, chars, use_hyphen, suffix)
+    yield from get_range_generator(length, use_letters, use_digits, use_hyphen, suffix, start_idx, end_idx)
 
 # ----------------- 核心扫描引擎: DNS 初筛 + RDAP 终验 -----------------
 

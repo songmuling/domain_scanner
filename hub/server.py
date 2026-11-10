@@ -11,6 +11,7 @@ Domain Hub - 统一域名扫描集群 Master 控制中心 (Nezha 架构)
 
 import os
 import sys
+import ssl
 import time
 import re
 import json
@@ -32,6 +33,50 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 DB_LOCK = threading.Lock()
+
+# 全局忽略部分特殊网络环境下的 SSL 证书校验错误
+ssl_context = ssl.create_default_context()
+ssl_context.check_hostname = False
+ssl_context.verify_mode = ssl.CERT_NONE
+
+def calc_domain_total(length, use_letters=True, use_digits=False, use_hyphen=False):
+    """O(1) 计算任意规则下的候选域名空间全量"""
+    chars = ""
+    if use_letters:
+        chars += "abcdefghijklmnopqrstuvwxyz"
+    if use_digits:
+        chars += "0123456789"
+    if not chars:
+        return 0
+    pool_len = len(chars)
+    base = pool_len ** length
+    return base * (length - 1) if use_hyphen else base
+
+def ensure_assignment_bounds(conn, row, task_row):
+    """确保分片记录具备精准的 start_idx 和 end_idx 区间，无缝兼容历史运行中的旧任务"""
+    if row["start_idx"] is not None and row["end_idx"] is not None:
+        return row["start_idx"], row["end_idx"], row["total"]
+
+    length = task_row["length"] if "length" in task_row.keys() and task_row["length"] is not None else 4
+    use_letters = bool(task_row["use_letters"]) if "use_letters" in task_row.keys() and task_row["use_letters"] is not None else True
+    use_digits = bool(task_row["use_digits"]) if "use_digits" in task_row.keys() and task_row["use_digits"] is not None else False
+    use_hyphen = bool(task_row["use_hyphen"]) if "use_hyphen" in task_row.keys() and task_row["use_hyphen"] is not None else False
+
+    total_all = calc_domain_total(length, use_letters, use_digits, use_hyphen)
+    s_num = row["shard_num"]
+    s_tot = row["shard_total"]
+    if s_tot <= 0:
+        s_tot = 1
+    s_idx = ((s_num - 1) * total_all) // s_tot
+    e_idx = (s_num * total_all) // s_tot
+    tot = e_idx - s_idx
+
+    conn.execute("""
+    UPDATE task_assignments SET start_idx = ?, end_idx = ?, total = ?
+    WHERE id = ?;
+    """, (s_idx, e_idx, tot, row["id"]))
+    conn.commit()
+    return s_idx, e_idx, tot
 
 def get_beijing_time_str():
     bj_tz = timezone(timedelta(hours=8))
@@ -409,11 +454,29 @@ def init_db_and_token():
                 ("use_letters", "BOOLEAN DEFAULT 1"),
                 ("use_digits", "BOOLEAN DEFAULT 0"),
                 ("use_hyphen", "BOOLEAN DEFAULT 0"),
-                ("reset_checkpoint", "BOOLEAN DEFAULT 0")
+                ("reset_checkpoint", "BOOLEAN DEFAULT 0"),
+                ("is_aid", "INTEGER DEFAULT 0"),
+                ("parent_task_id", "TEXT DEFAULT NULL")
             ]:
                 if col not in task_cols:
                     try:
                         conn.execute(f"ALTER TABLE tasks ADD COLUMN {col} {col_type};")
+                    except Exception:
+                        pass
+
+            # 自动迁移 task_assignments 旧表结构
+            cur.execute("PRAGMA table_info(task_assignments);")
+            assign_cols = {row["name"] for row in cur.fetchall()}
+            for col, col_type in [
+                ("start_idx", "INTEGER DEFAULT NULL"),
+                ("end_idx", "INTEGER DEFAULT NULL"),
+                ("is_aid", "INTEGER DEFAULT 0"),
+                ("aid_for", "TEXT DEFAULT NULL"),
+                ("parent_task_id", "TEXT DEFAULT NULL")
+            ]:
+                if col not in assign_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE task_assignments ADD COLUMN {col} {col_type};")
                     except Exception:
                         pass
 
@@ -524,14 +587,14 @@ def get_current_token():
         return row[0] if row else MASTER_TOKEN
 
 def check_verisign_rdap(domain):
-    """权威复检：查询 Verisign 官方 RDAP"""
+    """权威复检：查询 Verisign 官方 RDAP (携带 SSL 优化与快速超时)"""
     url = f"https://rdap.verisign.com/com/v1/domain/{domain.lower()}"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DomainHub-Verifier/1.0", "Accept": "application/rdap+json"}
     )
     try:
-        with urllib.request.urlopen(req, timeout=4) as resp:
+        with urllib.request.urlopen(req, timeout=3.5, context=ssl_context) as resp:
             if resp.status == 200:
                 return False, "已注册 (RDAP返回200)"
     except urllib.error.HTTPError as e:
@@ -584,35 +647,90 @@ def start_batch_recheck(mode="all"):
 
     def _worker():
         global BATCH_RECHECK_STATE
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import concurrent.futures
+
+        batch_buffer = []
+
+        def flush_batch(items):
+            if not items:
+                return
+            with get_db() as conn:
+                for dom, is_avail, reason in items:
+                    if not is_avail:
+                        conn.execute("""
+                        UPDATE domains SET status = 'registered', reason = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE domain = ?;
+                        """, (reason, dom))
+                    else:
+                        conn.execute("""
+                        UPDATE domains SET reason = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE domain = ?;
+                        """, (reason, dom))
+                conn.commit()
+
         try:
-            with ThreadPoolExecutor(max_workers=6) as executor:
-                futures = {executor.submit(check_verisign_rdap, d): d for d in target_domains}
-                for fut in as_completed(futures):
+            max_workers = 15
+            max_in_flight = 25
+            in_flight = {}
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                for d in target_domains:
                     if not BATCH_RECHECK_STATE["is_running"]:
                         break
-                    dom = futures[fut]
-                    BATCH_RECHECK_STATE["current_domain"] = dom
-                    try:
-                        is_avail, reason = fut.result()
-                    except Exception:
-                        is_avail, reason = True, "复验异常跳过"
 
-                    BATCH_RECHECK_STATE["checked"] += 1
-                    with get_db() as conn:
+                    fut = executor.submit(check_verisign_rdap, d)
+                    in_flight[fut] = d
+
+                    if len(in_flight) >= max_in_flight:
+                        done, _ = concurrent.futures.wait(
+                            in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED
+                        )
+                        for f in done:
+                            dom = in_flight.pop(f)
+                            BATCH_RECHECK_STATE["current_domain"] = dom
+                            try:
+                                is_avail, reason = f.result()
+                            except Exception:
+                                is_avail, reason = True, "复验异常跳过"
+
+                            BATCH_RECHECK_STATE["checked"] += 1
+                            if not is_avail:
+                                BATCH_RECHECK_STATE["taken"] += 1
+                            else:
+                                BATCH_RECHECK_STATE["still_available"] += 1
+                            batch_buffer.append((dom, is_avail, reason))
+
+                            if len(batch_buffer) >= 50:
+                                flush_batch(batch_buffer)
+                                batch_buffer.clear()
+
+                # 处理队列中剩余任务
+                while in_flight:
+                    done, _ = concurrent.futures.wait(
+                        in_flight.keys(), return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for f in done:
+                        dom = in_flight.pop(f)
+                        BATCH_RECHECK_STATE["current_domain"] = dom
+                        try:
+                            is_avail, reason = f.result()
+                        except Exception:
+                            is_avail, reason = True, "复验异常跳过"
+
+                        BATCH_RECHECK_STATE["checked"] += 1
                         if not is_avail:
                             BATCH_RECHECK_STATE["taken"] += 1
-                            conn.execute("""
-                            UPDATE domains SET status = 'registered', reason = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE domain = ?;
-                            """, (reason, dom))
                         else:
                             BATCH_RECHECK_STATE["still_available"] += 1
-                            conn.execute("""
-                            UPDATE domains SET reason = ?, updated_at = CURRENT_TIMESTAMP
-                            WHERE domain = ?;
-                            """, (reason, dom))
-                        conn.commit()
+                        batch_buffer.append((dom, is_avail, reason))
+
+                        if len(batch_buffer) >= 50:
+                            flush_batch(batch_buffer)
+                            batch_buffer.clear()
+
+                if batch_buffer:
+                    flush_batch(batch_buffer)
+                    batch_buffer.clear()
         finally:
             BATCH_RECHECK_STATE["is_running"] = False
             BATCH_RECHECK_STATE["finished_at"] = datetime.now().isoformat()
@@ -881,10 +999,10 @@ class HubHandler(BaseHTTPRequestHandler):
                 active_nodes = active_row[0]
                 total_speed = round(active_row[1], 1)
 
-                # 全局活跃任务列表 (支持异构多任务并发)
+                # 全局活跃任务列表 (支持异构多任务并发，且透明聚合并行援助子任务)
                 cur.execute("""
                 SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, datetime(t.created_at, '+8 hours') as created_at,
-                       COUNT(a.id) as total_shards,
+                       COUNT(DISTINCT a.id) as total_shards,
                        SUM(CASE WHEN a.status = 'running' THEN 1 ELSE 0 END) as running_shards,
                        SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
                        COALESCE(SUM(a.scanned), 0) as scanned,
@@ -892,8 +1010,8 @@ class HubHandler(BaseHTTPRequestHandler):
                        COALESCE(SUM(a.speed), 0) as speed,
                        COALESCE(SUM(a.available_count), 0) as available_count
                 FROM tasks t
-                LEFT JOIN task_assignments a ON t.task_id = a.task_id
-                WHERE t.status = 'running'
+                LEFT JOIN task_assignments a ON (t.task_id = a.task_id OR t.task_id = a.parent_task_id)
+                WHERE t.status = 'running' AND (t.is_aid = 0 OR t.is_aid IS NULL)
                 GROUP BY t.task_id
                 ORDER BY t.created_at DESC;
                 """)
@@ -968,15 +1086,17 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur = conn.cursor()
                 cur.execute("""
                 SELECT task_id, mode, suffix, threads, target_nodes, status, datetime(created_at, '+8 hours') as created_at, datetime(updated_at, '+8 hours') as updated_at
-                FROM tasks ORDER BY tasks.created_at DESC LIMIT 20;
+                FROM tasks
+                WHERE (is_aid = 0 OR is_aid IS NULL)
+                ORDER BY tasks.created_at DESC LIMIT 20;
                 """)
                 tasks = []
                 for row in cur.fetchall():
                     t = dict(row)
                     cur.execute("""
-                    SELECT node_id, shard_num, shard_total, status, scanned, total, speed, available_count
-                    FROM task_assignments WHERE task_id = ? ORDER BY shard_num ASC;
-                    """, (t["task_id"],))
+                    SELECT node_id, shard_num, shard_total, status, scanned, total, speed, available_count, is_aid, aid_for
+                    FROM task_assignments WHERE task_id = ? OR parent_task_id = ? ORDER BY id ASC;
+                    """, (t["task_id"], t["task_id"]))
                     t["assignments"] = [dict(a) for a in cur.fetchall()]
                     tasks.append(t)
             self.send_json({"code": 0, "data": tasks})
@@ -1022,24 +1142,6 @@ class HubHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 7. 导出 API
-        if path == "/api/export":
-            where_sql, bind_params = build_domain_filters(params)
-            status = params.get("status", ["available"])[0]
-
-            with get_db() as conn:
-                cur = conn.cursor()
-                cur.execute(f"SELECT domain FROM domains {where_sql} ORDER BY domain ASC;", bind_params)
-                lines = [r[0] for r in cur.fetchall()]
-
-            content = "\n".join(lines).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Disposition", f'attachment; filename="domains_export_{status}_{len(lines)}.txt"')
-            self.send_header("Content-Length", str(len(content)))
-            self.end_headers()
-            self.wfile.write(content)
-            return
 
         # 8. 存量资产批量复验状态 API
         if path == "/api/domain/batch_recheck/status":
@@ -1133,25 +1235,35 @@ class HubHandler(BaseHTTPRequestHandler):
                         WHERE task_id = ? AND node_id = ?;
                         """, (scanned, total, speed, avail_cnt, effective_assign_status, task_id, node_id))
 
-                        # 检查当前任务是否所有参与分片均已完成
+                        if effective_assign_status == "completed":
+                            conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND is_aid = 1;", (task_id,))
+
+                        # 检查当前主任务是否所有参与分片均已完成
+                        p_id = task_id
                         cur = conn.cursor()
+                        cur.execute("SELECT parent_task_id FROM tasks WHERE task_id = ?;", (task_id,))
+                        p_row = cur.fetchone()
+                        if p_row and p_row[0]:
+                            p_id = p_row[0]
+
                         cur.execute("""
                         SELECT COUNT(*) as total_shards,
                                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
                                SUM(CASE WHEN status IN ('pending', 'running') THEN 1 ELSE 0 END) as active_shards
-                        FROM task_assignments WHERE task_id = ?;
-                        """, (task_id,))
+                        FROM task_assignments WHERE task_id = ? OR parent_task_id = ?;
+                        """, (p_id, p_id))
                         task_stat_row = cur.fetchone()
                         if task_stat_row and task_stat_row["active_shards"] == 0:
                             if task_stat_row["completed_shards"] > 0:
-                                conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
+                                conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE (task_id = ? OR parent_task_id = ?) AND status = 'running';", (p_id, p_id))
                             else:
-                                conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND status = 'running';", (task_id,))
+                                conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE (task_id = ? OR parent_task_id = ?) AND status = 'running';", (p_id, p_id))
 
                     # 检查 Master 是否有为该节点下发的新指令 (获取该节点的最新分配)
                     cur = conn.cursor()
                     cur.execute("""
-                    SELECT a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
+                    SELECT a.id as assign_id, a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
+                           a.start_idx, a.end_idx, a.total as assign_total, a.is_aid, a.aid_for, a.parent_task_id,
                            t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
@@ -1164,12 +1276,15 @@ class HubHandler(BaseHTTPRequestHandler):
                 # 下发指令判定
                 command = "IDLE"
                 task_payload = None
+                trimmed_total = None
+                trimmed_end_idx = None
 
                 if assign_row:
                     t_status = assign_row["task_status"]
                     assigned_task_id = assign_row["task_id"]
                     assign_status = assign_row["assign_status"]
                     assign_scanned = assign_row["assign_scanned"] or 0
+                    row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
 
                     # 1. 任务或当前节点分片已被停止
                     if t_status == "stopped" or assign_status == "stopped":
@@ -1178,28 +1293,18 @@ class HubHandler(BaseHTTPRequestHandler):
                         else:
                             command = "IDLE"
 
-                    # 2. 当前节点分片已完成
-                    elif assign_status == "completed":
-                        command = "IDLE"
-
-                    # 3. 任务与节点分片均处于活跃状态
-                    elif t_status == "running" and assign_status in ("pending", "running"):
+                    # 2. 当前节点分片已处于 running 状态
+                    elif t_status == "running" and assign_status == "running":
                         if task_id == assigned_task_id and client_status == "running":
-                            # 已经在正确执行该分片
                             command = "IDLE"
-                        else:
-                            # 需启动或切换到该分片任务
+                            trimmed_total = assign_row["assign_total"]
+                            trimmed_end_idx = assign_row["end_idx"]
+                        elif client_status not in ("completed",):
                             command = "START"
-                            row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
-                            
-                            # 关键容错：只在分片首次认领（status == 'pending' 且 scanned == 0）时允许 reset_checkpoint
-                            # 若 Agent 是中途断线重连（assign_scanned > 0 或 status != 'pending'），强制设为 False，保障断点继续生效！
                             should_reset_ckpt = False
-                            if assign_status == "pending" and assign_scanned == 0:
-                                should_reset_ckpt = bool(assign_row["reset_checkpoint"]) if "reset_checkpoint" in row_keys and assign_row["reset_checkpoint"] is not None else False
-
                             task_payload = {
                                 "task_id": assigned_task_id,
+                                "parent_task_id": assign_row["parent_task_id"] if "parent_task_id" in row_keys else "",
                                 "mode": assign_row["mode"],
                                 "length": assign_row["length"] if "length" in row_keys and assign_row["length"] is not None else 4,
                                 "use_letters": bool(assign_row["use_letters"]) if "use_letters" in row_keys and assign_row["use_letters"] is not None else True,
@@ -1207,21 +1312,171 @@ class HubHandler(BaseHTTPRequestHandler):
                                 "use_hyphen": bool(assign_row["use_hyphen"]) if "use_hyphen" in row_keys and assign_row["use_hyphen"] is not None else False,
                                 "reset_checkpoint": should_reset_ckpt,
                                 "suffix": assign_row["suffix"],
+                                "start_idx": assign_row["start_idx"] if "start_idx" in row_keys else None,
+                                "end_idx": assign_row["end_idx"] if "end_idx" in row_keys else None,
+                                "total": assign_row["assign_total"] if "assign_total" in row_keys and assign_row["assign_total"] is not None else 0,
                                 "shard_num": assign_row["shard_num"],
                                 "shard_total": assign_row["shard_total"],
-                                "threads": assign_row["threads"]
+                                "threads": assign_row["threads"],
+                                "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
+                                "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else ""
                             }
 
-                            if assign_status == "pending":
-                                with get_db() as conn:
-                                    conn.execute("UPDATE task_assignments SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND node_id = ?;", (assigned_task_id, node_id))
-                                    conn.commit()
+                    # 3. 分片处于 pending 状态，立即下发 START
+                    elif t_status == "running" and assign_status == "pending":
+                        command = "START"
+                        should_reset_ckpt = False
+                        if assign_status == "pending" and assign_scanned == 0:
+                            should_reset_ckpt = bool(assign_row["reset_checkpoint"]) if "reset_checkpoint" in row_keys and assign_row["reset_checkpoint"] is not None else False
 
-                self.send_json({
+                        task_payload = {
+                            "task_id": assigned_task_id,
+                            "parent_task_id": assign_row["parent_task_id"] if "parent_task_id" in row_keys else "",
+                            "mode": assign_row["mode"],
+                            "length": assign_row["length"] if "length" in row_keys and assign_row["length"] is not None else 4,
+                            "use_letters": bool(assign_row["use_letters"]) if "use_letters" in row_keys and assign_row["use_letters"] is not None else True,
+                            "use_digits": bool(assign_row["use_digits"]) if "use_digits" in row_keys and assign_row["use_digits"] is not None else False,
+                            "use_hyphen": bool(assign_row["use_hyphen"]) if "use_hyphen" in row_keys and assign_row["use_hyphen"] is not None else False,
+                            "reset_checkpoint": should_reset_ckpt,
+                            "suffix": assign_row["suffix"],
+                            "start_idx": assign_row["start_idx"] if "start_idx" in row_keys else None,
+                            "end_idx": assign_row["end_idx"] if "end_idx" in row_keys else None,
+                            "total": assign_row["assign_total"] if "assign_total" in row_keys and assign_row["assign_total"] is not None else 0,
+                            "shard_num": assign_row["shard_num"],
+                            "shard_total": assign_row["shard_total"],
+                            "threads": assign_row["threads"],
+                            "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
+                            "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else ""
+                        }
+                        with get_db() as conn:
+                            conn.execute("UPDATE task_assignments SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?;", (assign_row["assign_id"],))
+                            conn.commit()
+
+                # 4. 尾部工作窃取 (Work-Stealing / 尾部援助接力)
+                # 当节点空闲 (idle 或已跑完 completed)，自动从集群中最慢节点的未扫尾部切取任务接力加速
+                is_node_free = (client_status in ("idle", "completed") or (total > 0 and scanned >= total))
+                if command == "IDLE" and is_node_free:
+                    with get_db() as conn:
+                        cur = conn.cursor()
+                        # 查找当前是否有正在运行的根主任务
+                        cur.execute("""
+                        SELECT task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads
+                        FROM tasks
+                        WHERE status = 'running' AND (is_aid = 0 OR is_aid IS NULL)
+                        ORDER BY created_at DESC LIMIT 1;
+                        """)
+                        parent_task = cur.fetchone()
+
+                        if parent_task:
+                            p_task_id = parent_task["task_id"]
+                            # 确认当前节点在该主任务下没有其他未结算的活跃任务
+                            cur.execute("""
+                            SELECT id FROM task_assignments
+                            WHERE (task_id = ? OR parent_task_id = ?) AND node_id = ? AND status IN ('pending', 'running');
+                            """, (p_task_id, p_task_id, node_id))
+                            active_on_node = cur.fetchall()
+
+                            if not active_on_node:
+                                # 寻找当前主任务下剩余工作量最大且处于 running 的慢节点分片
+                                cur.execute("""
+                                SELECT a.id, a.task_id, a.node_id, a.shard_num, a.shard_total, a.scanned, a.total, a.start_idx, a.end_idx
+                                FROM task_assignments a
+                                WHERE (a.task_id = ? OR a.parent_task_id = ?)
+                                  AND a.status = 'running'
+                                  AND a.node_id != ?
+                                ORDER BY (a.total - a.scanned) DESC;
+                                """, (p_task_id, p_task_id, node_id))
+                                candidates = cur.fetchall()
+
+                                for cand in candidates:
+                                    s_idx, e_idx, cur_tot = ensure_assignment_bounds(conn, cand, parent_task)
+                                    c_scanned = cand["scanned"] or 0
+                                    remaining = cur_tot - c_scanned
+                                    if remaining > 20000:
+                                        # 触发尾部工作窃取：从慢节点的未扫尾部切出 5 万（或一半）
+                                        slice_size = min(50000, remaining // 2)
+                                        slice_end = e_idx
+                                        slice_start = slice_end - slice_size
+                                        new_cand_end = slice_start
+                                        new_cand_total = cur_tot - slice_size
+
+                                        # 1. 动态缩减慢节点的截止线与总任务量
+                                        conn.execute("""
+                                        UPDATE task_assignments
+                                        SET end_idx = ?, total = ?, updated_at = CURRENT_TIMESTAMP
+                                        WHERE id = ?;
+                                        """, (new_cand_end, new_cand_total, cand["id"]))
+
+                                        # 2. 为当前空闲节点生成援助子任务
+                                        aid_seq = int(time.time() * 1000) % 100000
+                                        aid_task_id = f"{p_task_id}_aid_{node_id}_{aid_seq}"
+                                        conn.execute("""
+                                        INSERT INTO tasks (
+                                            task_id, mode, length, use_letters, use_digits, use_hyphen,
+                                            reset_checkpoint, suffix, threads, target_nodes, status,
+                                            is_aid, parent_task_id
+                                        ) VALUES (
+                                            ?, ?, ?, ?, ?, ?,
+                                            0, ?, ?, ?, 'running',
+                                            1, ?
+                                        );
+                                        """, (
+                                            aid_task_id, parent_task["mode"], parent_task["length"],
+                                            parent_task["use_letters"], parent_task["use_digits"], parent_task["use_hyphen"],
+                                            parent_task["suffix"], parent_task["threads"], json.dumps([node_id]),
+                                            p_task_id
+                                        ))
+
+                                        # 3. 记录援助分片到 task_assignments
+                                        conn.execute("""
+                                        INSERT INTO task_assignments (
+                                            task_id, node_id, shard_num, shard_total, status,
+                                            scanned, total, start_idx, end_idx,
+                                            is_aid, aid_for, parent_task_id
+                                        ) VALUES (
+                                            ?, ?, 0, ?, 'running',
+                                            0, ?, ?, ?,
+                                            1, ?, ?
+                                        );
+                                        """, (
+                                            aid_task_id, node_id, cand["shard_total"],
+                                            slice_size, slice_start, slice_end,
+                                            cand["node_id"], p_task_id
+                                        ))
+                                        conn.commit()
+
+                                        command = "START"
+                                        task_payload = {
+                                            "task_id": aid_task_id,
+                                            "parent_task_id": p_task_id,
+                                            "mode": parent_task["mode"],
+                                            "length": parent_task["length"],
+                                            "use_letters": bool(parent_task["use_letters"]),
+                                            "use_digits": bool(parent_task["use_digits"]),
+                                            "use_hyphen": bool(parent_task["use_hyphen"]),
+                                            "reset_checkpoint": False,
+                                            "suffix": parent_task["suffix"],
+                                            "start_idx": slice_start,
+                                            "end_idx": slice_end,
+                                            "total": slice_size,
+                                            "shard_num": 0,
+                                            "shard_total": cand["shard_total"],
+                                            "threads": parent_task["threads"],
+                                            "is_aid": True,
+                                            "aid_for": cand["node_id"]
+                                        }
+                                        print(f"[{get_beijing_time_str()}] ⚡ 触发尾部工作窃取：空闲节点 【{node_id}】 接力援助慢节点 【{cand['node_id']}】，分流尾部区间 [{slice_start:,} ~ {slice_end:,}] (共 {slice_size:,} 个域名)")
+                                        break
+
+                resp_payload = {
                     "code": 0,
                     "command": command,
                     "task": task_payload
-                })
+                }
+                if trimmed_total is not None and trimmed_end_idx is not None:
+                    resp_payload["trimmed_total"] = trimmed_total
+                    resp_payload["trimmed_end_idx"] = trimmed_end_idx
+                self.send_json(resp_payload)
                 return
 
             # 3. Agent 发现可用域名实时入库
@@ -1370,12 +1625,16 @@ class HubHandler(BaseHTTPRequestHandler):
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running');
                 """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes)))
 
+                total_all = calc_domain_total(length, use_letters, use_digits, use_hyphen)
                 # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)
                 for idx, n_id in enumerate(selected_nodes, start=1):
+                    start_idx = ((idx - 1) * total_all) // shard_total
+                    end_idx = (idx * total_all) // shard_total
+                    total_count = end_idx - start_idx
                     conn.execute("""
-                    INSERT INTO task_assignments (task_id, node_id, shard_num, shard_total, status)
-                    VALUES (?, ?, ?, ?, 'pending');
-                    """, (task_id, n_id, idx, shard_total))
+                    INSERT INTO task_assignments (task_id, node_id, shard_num, shard_total, status, start_idx, end_idx, total)
+                    VALUES (?, ?, ?, ?, 'pending', ?, ?, ?);
+                    """, (task_id, n_id, idx, shard_total, start_idx, end_idx, total_count))
 
                 conn.commit()
 
@@ -1411,8 +1670,8 @@ class HubHandler(BaseHTTPRequestHandler):
             task_id = data.get("task_id", "")
             with get_db() as conn:
                 if task_id:
-                    conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ?;", (task_id,))
-                    conn.execute("UPDATE task_assignments SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ?;", (task_id,))
+                    conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? OR parent_task_id = ?;", (task_id, task_id))
+                    conn.execute("UPDATE task_assignments SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? OR parent_task_id = ?;", (task_id, task_id))
                 else:
                     conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE status = 'running';")
                     conn.execute("UPDATE task_assignments SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE status = 'running';")
@@ -1526,52 +1785,6 @@ class HubHandler(BaseHTTPRequestHandler):
         if path == "/api/domain/batch_recheck/stop":
             BATCH_RECHECK_STATE["is_running"] = False
             self.send_json({"code": 0, "msg": "批量复验任务已请求停止"})
-            return
-
-        # 7. 历史数据批量导入
-        if path == "/api/import":
-            data = self.read_json_body()
-            raw_text = data.get("text", "")
-            domains_list = data.get("domains", [])
-            node_id = data.get("node_id", "manual_import")
-            mode = data.get("mode", "")
-
-            if raw_text:
-                domains_list.extend([line.strip().lower() for line in raw_text.splitlines() if line.strip()])
-
-            added = 0
-            with get_db() as conn:
-                for d in domains_list:
-                    if "." not in d:
-                        d = f"{d}.com"
-                    m = mode
-                    if not m:
-                        clean_name = d.split(".")[0]
-                        has_h = "-" in clean_name
-                        l = len(clean_name)
-                        m = f"{l}letter-" if has_h else f"{l}letter"
-
-                    feats = analyze_domain_features(d)
-                    try:
-                        conn.execute("""
-                        INSERT OR IGNORE INTO domains (
-                            domain, mode, node_id, status, reason,
-                            max_repeat, max_seq, max_seq_asc, max_seq_desc,
-                            is_palindrome, patterns, is_pronounceable, has_vowel, is_clean
-                        )
-                        VALUES (?, ?, ?, 'available', '历史数据导入', ?, ?, ?, ?, ?, ?, ?, ?, ?);
-                        """, (
-                            d, m, node_id,
-                            feats["max_repeat"], feats["max_seq"], feats["max_seq_asc"], feats["max_seq_desc"],
-                            feats["is_palindrome"], feats["patterns"], feats["is_pronounceable"],
-                            feats["has_vowel"], feats["is_clean"]
-                        ))
-                        added += 1
-                    except Exception:
-                        pass
-                conn.commit()
-
-            self.send_json({"code": 0, "msg": f"成功导入 {added} 个域名"})
             return
 
         self.send_error(404, "Endpoint Not Found")

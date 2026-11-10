@@ -398,14 +398,7 @@
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
           🤖 接入 Agent
         </button>
-        <button @click="openImportModal = true"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-          📥 导入TXT
-        </button>
-        <button @click="exportCurrent"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-          📤 导出当前
-        </button>
+
         <button @click="refreshAll" :disabled="loading" title="手动立即刷新同步资产库"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
           <span :class="{'animate-spin inline-block': loading}">🔄</span>
@@ -625,10 +618,7 @@
             class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 text-xs font-medium shadow-sm">
             <span>🔄 存量复验</span>
           </button>
-          <button @click="exportCurrent"
-            class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition flex items-center gap-1 text-xs font-medium">
-            <span>📤 导出清单</span>
-          </button>
+
         </div>
       </div>
 
@@ -1152,44 +1142,7 @@
       </div>
     </div>
 
-    <!-- 模态框 3：导入历史 TXT -->
-    <div v-if="openImportModal"
-      @click.self="openImportModal = false"
-      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
-        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
-          <h3 class="text-base font-bold text-white flex items-center gap-2">
-            <span>📥</span> 批量导入历史可用域名
-          </h3>
-          <button @click="openImportModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
-        </div>
 
-        <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
-          <textarea v-model="importText" rows="8" placeholder="每行一个域名，例如：&#10;a-bw.com&#10;ai-x.com"
-            class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
-
-          <div class="flex items-center justify-between">
-            <select v-model="importMode"
-              class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
-              <option value="">自动推断模式</option>
-              <option value="4letter-">4letter-</option>
-              <option value="4mix-">4mix-</option>
-              <option value="3letter-">3letter-</option>
-              <option value="5letter">5letter</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="flex items-center justify-end gap-2 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
-          <button @click="openImportModal = false"
-            class="px-3 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
-          <button @click="submitImport" :disabled="importing || !importText.trim()"
-            class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg shadow transition">
-            {{ importing ? '正在导入...' : '立即导入' }}
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- 模态框 4：存量资产权威批量复验 -->
     <div v-if="openBatchRecheckModal"
@@ -1543,10 +1496,6 @@
         });
 
         const openTokenModal = ref(false);
-        const openImportModal = ref(false);
-        const importText = ref('');
-        const importMode = ref('');
-        const importing = ref(false);
 
 
 
@@ -1874,57 +1823,6 @@
           }
         };
 
-        const submitImport = async () => {
-          if (!importText.value.trim()) return;
-          importing.value = true;
-          try {
-            const res = await fetch('/api/import', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                text: importText.value,
-                mode: importMode.value,
-                node_id: 'web_import'
-              })
-            });
-            const data = await res.json();
-            if (data.code === 0) {
-              showToast(data.msg);
-              openImportModal.value = false;
-              importText.value = '';
-              fetchDomains();
-              fetchStats();
-            }
-          } catch (e) {
-            showToast('导入失败');
-          } finally {
-            importing.value = false;
-          }
-        };
-
-        const exportCurrent = () => {
-          const params = new URLSearchParams({
-            status: onlyStarred.value ? 'starred' : 'available',
-            starred: onlyStarred.value ? '1' : '0',
-            mode: currentMode.value,
-            lengths: filterLengths.value.join(','),
-            letters: filterLetter.value ? '1' : '0',
-            digits: filterDigit.value ? '1' : '0',
-            hyphen: filterHyphen.value ? '1' : '0',
-            repeat_count: filterRepeat.value,
-            seq_count: filterSeqCount.value,
-            seq_dir: filterSeqDir.value,
-            pattern: filterPattern.value,
-            pronounceable: isPronounceable.value ? '1' : '0',
-            q: searchKeyword.value,
-            prefix: prefixFilter.value,
-            suffix: suffixFilter.value,
-            has_vowel: hasVowel.value ? '1' : '0',
-            exclude_rare: excludeRare.value ? '1' : '0'
-          });
-          window.open(`/api/export?${params.toString()}`, '_blank');
-        };
-
         const refreshAll = () => {
           fetchStats();
           fetchNodes();
@@ -1936,7 +1834,6 @@
           if (e.key === 'Escape') {
             openDispatchModal.value = false;
             openTokenModal.value = false;
-            openImportModal.value = false;
             openBatchRecheckModal.value = false;
           }
         };
@@ -1969,11 +1866,11 @@
           activeAgentTab, isEditingToken, newTokenInput,
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
           submitDispatch, stopClusterTask, deleteNode, activeTaskList,
-          openTokenModal, openImportModal, importText, importMode, importing,
+          openTokenModal,
           openBatchRecheckModal, batchRecheckScope, batchRecheckState,
           startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
           copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
-          submitImport, exportCurrent, refreshAll
+          refreshAll
         };
       }
     }).mount('#app');
