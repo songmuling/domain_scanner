@@ -438,13 +438,19 @@ def init_db_and_token():
             existing_cols = {row["name"] for row in cur.fetchall()}
             for col, col_type in [
                 ("ip", "TEXT"), ("os_info", "TEXT"), ("agent_version", "TEXT"),
-                ("current_task_id", "TEXT"), ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+                ("current_task_id", "TEXT"), ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"),
+                ("agent_uuid", "TEXT")
             ]:
                 if col not in existing_cols:
                     try:
                         conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_type};")
                     except Exception:
                         pass
+
+            try:
+                conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_nodes_agent_uuid ON nodes(agent_uuid) WHERE agent_uuid IS NOT NULL;")
+            except Exception:
+                pass
 
             # 自动迁移 tasks 旧表结构
             cur.execute("PRAGMA table_info(tasks);")
@@ -500,6 +506,64 @@ def init_db_and_token():
 
             conn.commit()
             return final_token
+
+def resolve_node_identity(conn, node_id, agent_uuid):
+    """
+    双轨节点物理身份决议 (UUID 指纹 + 可读别名绑定):
+    1. 若未上报 agent_uuid，保持旧版逻辑直接返回 node_id
+    2. 若提供 agent_uuid:
+       - 查该 UUID 是否已绑定过某节点名:
+         - 若存在，且旧名 != 当前请求 node_id:
+           - 检查新名字是否被其他不同 UUID 的节点占用
+           - 若未被占用，无缝热改名！同步更新 nodes 和 task_assignments，返回新 node_id
+           - 若被占用，自动追加后缀保护: {node_id}_{agent_uuid[-4:]}
+         - 若存在且名字未变: 直接返回该名字
+       - 若数据库尚未记录该 UUID:
+         - 检查当前请求的 node_id 是否已存在且 agent_uuid 为空 (升级平滑静默认领):
+           - 绑定该 agent_uuid 到当前 node_id，返回当前 node_id
+         - 检查当前请求的 node_id 是否已被其他 UUID 占用:
+           - 若已被占用，分配安全别名: {node_id}_{agent_uuid[-4:]}
+         - 若 node_id 完全不存在:
+           - 正常接纳新节点
+    返回: (effective_node_id, bound_agent_uuid)
+    """
+    if not agent_uuid:
+        return node_id, None
+
+    cur = conn.cursor()
+    cur.execute("SELECT node_id, agent_uuid FROM nodes WHERE agent_uuid = ?;", (agent_uuid,))
+    node_by_uuid = cur.fetchone()
+
+    cur.execute("SELECT node_id, agent_uuid FROM nodes WHERE node_id = ?;", (node_id,))
+    node_by_id = cur.fetchone()
+
+    if node_by_uuid:
+        old_name = node_by_uuid["node_id"]
+        if old_name != node_id:
+            # 节点改名场景
+            if node_by_id and node_by_id["agent_uuid"] and node_by_id["agent_uuid"] != agent_uuid:
+                assigned_name = f"{node_id}_{agent_uuid[-4:]}"
+                conn.execute("UPDATE nodes SET node_id = ? WHERE agent_uuid = ?;", (assigned_name, agent_uuid))
+                conn.execute("UPDATE task_assignments SET node_id = ? WHERE node_id = ?;", (assigned_name, old_name))
+                return assigned_name, agent_uuid
+            else:
+                conn.execute("UPDATE nodes SET node_id = ? WHERE agent_uuid = ?;", (node_id, agent_uuid))
+                conn.execute("UPDATE task_assignments SET node_id = ? WHERE node_id = ?;", (node_id, old_name))
+                return node_id, agent_uuid
+        return old_name, agent_uuid
+
+    # 首次接入此 UUID
+    if node_by_id:
+        if not node_by_id["agent_uuid"]:
+            # 初次升级静默认领绑定
+            conn.execute("UPDATE nodes SET agent_uuid = ? WHERE node_id = ?;", (agent_uuid, node_id))
+            return node_id, agent_uuid
+        else:
+            # 重名冲突，分配防碰撞后缀
+            assigned_name = f"{node_id}_{agent_uuid[-4:]}"
+            return assigned_name, agent_uuid
+
+    return node_id, agent_uuid
 
 def start_feature_backfill_worker():
     """后台异步计算并补齐存量历史资产的特征索引字段，毫秒级无锁分批，不阻塞主服务"""
@@ -1049,7 +1113,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur = conn.cursor()
                 cur.execute("""
                 SELECT 
-                    node_id, ip, os_info, agent_version, status, current_task_id,
+                    node_id, ip, os_info, agent_version, agent_uuid, status, current_task_id,
                     mode, shard, scanned, total, speed, available_count,
                     last_seen,
                     (strftime('%s', 'now') - strftime('%s', last_seen)) as idle_sec
@@ -1063,6 +1127,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     effective_status = row["status"] if is_online else "offline"
                     nodes.append({
                         "node_id": row["node_id"],
+                        "agent_uuid": row["agent_uuid"] or "",
                         "ip": row["ip"] or "",
                         "os_info": row["os_info"] or "",
                         "agent_version": row["agent_version"] or "1.0",
@@ -1165,35 +1230,39 @@ class HubHandler(BaseHTTPRequestHandler):
             # 1. Agent 自动注册 (握手)
             if path == "/api/agent/register":
                 data = self.read_json_body()
-                node_id = data.get("node_id", "").strip()
-                if not node_id:
-                    self.send_json({"code": 1, "msg": "node_id is required"}, 400)
+                raw_node_id = data.get("node_id", "").strip()
+                agent_uuid = data.get("agent_uuid", "").strip()
+                if not raw_node_id and not agent_uuid:
+                    self.send_json({"code": 1, "msg": "node_id or agent_uuid is required"}, 400)
                     return
                 client_ip = self.client_address[0]
                 os_info = data.get("os_info", "")
                 version = data.get("version", "1.0")
 
                 with get_db() as conn:
+                    effective_node_id, bound_uuid = resolve_node_identity(conn, raw_node_id or f"node_{agent_uuid[-6:]}", agent_uuid)
                     conn.execute("""
-                    INSERT INTO nodes (node_id, ip, os_info, agent_version, status, last_seen)
-                    VALUES (?, ?, ?, ?, 'idle', CURRENT_TIMESTAMP)
+                    INSERT INTO nodes (node_id, ip, os_info, agent_version, agent_uuid, status, last_seen)
+                    VALUES (?, ?, ?, ?, ?, 'idle', CURRENT_TIMESTAMP)
                     ON CONFLICT(node_id) DO UPDATE SET
                         ip = excluded.ip,
                         os_info = excluded.os_info,
                         agent_version = excluded.agent_version,
+                        agent_uuid = COALESCE(excluded.agent_uuid, nodes.agent_uuid),
                         last_seen = CURRENT_TIMESTAMP;
-                    """, (node_id, client_ip, os_info, version))
+                    """, (effective_node_id, client_ip, os_info, version, bound_uuid))
                     conn.commit()
 
-                self.send_json({"code": 0, "msg": "注册成功", "node_id": node_id})
+                self.send_json({"code": 0, "msg": "注册成功", "node_id": effective_node_id, "agent_uuid": bound_uuid})
                 return
 
             # 2. Agent 心跳上报与任务指令获取
             if path == "/api/agent/heartbeat":
                 data = self.read_json_body()
-                node_id = data.get("node_id", "").strip()
-                if not node_id:
-                    self.send_json({"code": 1, "msg": "node_id is required"}, 400)
+                raw_node_id = data.get("node_id", "").strip()
+                agent_uuid = data.get("agent_uuid", "").strip()
+                if not raw_node_id and not agent_uuid:
+                    self.send_json({"code": 1, "msg": "node_id or agent_uuid is required"}, 400)
                     return
 
                 task_id = data.get("task_id", "")
@@ -1207,10 +1276,12 @@ class HubHandler(BaseHTTPRequestHandler):
                 agent_ver = data.get("version")
 
                 with get_db() as conn:
+                    node_id, bound_uuid = resolve_node_identity(conn, raw_node_id or f"node_{agent_uuid[-6:]}", agent_uuid)
+
                     # 更新节点状态
                     conn.execute("""
-                    INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, agent_version, last_seen)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '1.0'), CURRENT_TIMESTAMP)
+                    INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, agent_version, agent_uuid, last_seen)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '1.0'), ?, CURRENT_TIMESTAMP)
                     ON CONFLICT(node_id) DO UPDATE SET
                         ip = excluded.ip,
                         status = excluded.status,
@@ -1222,8 +1293,9 @@ class HubHandler(BaseHTTPRequestHandler):
                         speed = excluded.speed,
                         available_count = excluded.available_count,
                         agent_version = CASE WHEN excluded.agent_version IS NOT NULL AND excluded.agent_version != '' THEN excluded.agent_version ELSE nodes.agent_version END,
+                        agent_uuid = COALESCE(excluded.agent_uuid, nodes.agent_uuid),
                         last_seen = CURRENT_TIMESTAMP;
-                    """, (node_id, self.client_address[0], client_status, task_id, mode, shard, scanned, total, speed, avail_cnt, agent_ver))
+                    """, (node_id, self.client_address[0], client_status, task_id, mode, shard, scanned, total, speed, avail_cnt, agent_ver, bound_uuid))
 
                     # 如果在跑任务，同步更新任务分片进度
                     if task_id:
@@ -1480,7 +1552,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 resp_payload = {
                     "code": 0,
                     "command": command,
-                    "task": task_payload
+                    "task": task_payload,
+                    "assigned_node_id": node_id
                 }
                 if trimmed_total is not None and trimmed_end_idx is not None:
                     resp_payload["trimmed_total"] = trimmed_total

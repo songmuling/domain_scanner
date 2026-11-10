@@ -20,13 +20,37 @@ import urllib.error
 import threading
 import queue
 import signal
+import uuid
 
 # 客户端统一时间戳构建版本号 (yy.mmdd.hhmm 格式)
-AGENT_VERSION = "26.1110.2200"
+AGENT_VERSION = "26.1110.2240"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
+
+def get_or_create_agent_uuid():
+    """
+    获取或持久化生成当前 Agent 的全局唯一机器物理指纹 (UUID)
+    保存在 agent 同级目录下的 .agent_uuid 隐藏文件中，确保机器重启后身份永久固定
+    """
+    uuid_file = os.path.join(SCRIPT_DIR, ".agent_uuid")
+    if os.path.exists(uuid_file):
+        try:
+            with open(uuid_file, "r", encoding="utf-8") as f:
+                u = f.read().strip()
+                if u and len(u) >= 8:
+                    return u
+        except Exception:
+            pass
+
+    new_uuid = f"node_{uuid.uuid4().hex[:12]}"
+    try:
+        with open(uuid_file, "w", encoding="utf-8") as f:
+            f.write(new_uuid)
+    except Exception as e:
+        print(f"[!] 写入本地 .agent_uuid 失败: {e}")
+    return new_uuid
 
 try:
     from . import scanner
@@ -250,10 +274,11 @@ class ScanWorker:
                 print(f"\n[*] 任务 {self.task_id} 工作线程已停止。当前核查进度 {self.checked_count:,} / {self.total:,}")
 
 class HubClient:
-    def __init__(self, hub_url, token, node_id):
+    def __init__(self, hub_url, token, node_id, agent_uuid):
         self.hub_url = hub_url.rstrip("/")
         self.token = token
         self.node_id = node_id
+        self.agent_uuid = agent_uuid
         self._report_queue = queue.Queue()
         self._stop_event = threading.Event()
         self._reporter_thread = threading.Thread(target=self._report_worker, daemon=True)
@@ -276,13 +301,20 @@ class HubClient:
 
     def register(self):
         payload = {
+            "agent_uuid": self.agent_uuid,
             "node_id": self.node_id,
             "os_info": f"{platform.system()} {platform.machine()}",
             "version": AGENT_VERSION
         }
         try:
             res = self._post("/api/agent/register", payload)
-            return res.get("code") == 0
+            if res.get("code") == 0:
+                assigned = res.get("node_id")
+                if assigned and assigned != self.node_id:
+                    print(f"[*] 节点标识已由 Hub 确认/调整为: {assigned}")
+                    self.node_id = assigned
+                return True
+            return False
         except Exception as e:
             print(f"[!] 注册到 Master 失败 ({self.hub_url}): {e}")
             return False
@@ -317,6 +349,7 @@ class HubClient:
             avail = 0
 
         payload = {
+            "agent_uuid": self.agent_uuid,
             "node_id": self.node_id,
             "task_id": task_id,
             "mode": mode,
@@ -329,7 +362,13 @@ class HubClient:
             "version": AGENT_VERSION
         }
         try:
-            return self._post("/api/agent/heartbeat", payload, timeout=3)
+            resp = self._post("/api/agent/heartbeat", payload, timeout=3)
+            if resp and resp.get("code") == 0:
+                assigned = resp.get("assigned_node_id")
+                if assigned and assigned != self.node_id:
+                    print(f"[*] 节点标识已由 Hub 修正为: {assigned}")
+                    self.node_id = assigned
+            return resp
         except Exception as e:
             return None
 
@@ -413,10 +452,12 @@ def main():
 
     node_id = args.node.strip() or auto_detect_node_id()
     token = args.token.strip()
+    agent_uuid = get_or_create_agent_uuid()
 
     print(f"==================================================")
     print(f" ⚡ Domain Agent 集群客户端启动中...")
     print(f" 客户端版本: v{AGENT_VERSION}")
+    print(f" 节点指纹: {agent_uuid}")
     print(f" 节点标识: {node_id}")
     print(f" Master Hub: {args.hub}")
     if args.max_threads > 0:
@@ -425,7 +466,7 @@ def main():
         print(f" 本地最大线程上限: 无限制 (完全跟随 Hub 调度)")
     print(f"==================================================")
 
-    client = HubClient(args.hub, token, node_id)
+    client = HubClient(args.hub, token, node_id, agent_uuid)
     client.cli_max_threads = args.max_threads if args.max_threads > 0 else None
 
     # 首次注册

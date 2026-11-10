@@ -517,7 +517,7 @@
                 <span class="relative inline-flex rounded-full h-2 w-2"
                   :class="node.status === 'running' ? 'bg-emerald-400' : (node.status === 'completed' ? 'bg-sky-400' : (node.status === 'idle' ? 'bg-amber-400' : 'bg-slate-500'))"></span>
               </span>
-              <span class="font-bold text-sm text-slate-200">{{ node.node_id }}</span>
+              <span class="font-bold text-sm text-slate-200" :title="node.agent_uuid ? '物理指纹: ' + node.agent_uuid : '暂未绑定物理指纹'">{{ node.node_id }}</span>
             </div>
             <div class="flex items-center gap-1.5">
               <span v-if="node.status === 'running'"
@@ -543,7 +543,7 @@
 
           <!-- 节点 IP 与系统 -->
           <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between font-mono">
-            <span>IP: {{ node.ip || '内网' }}</span>
+            <span>IP: {{ node.ip || '内网' }} <span v-if="node.agent_uuid" class="text-[10px] text-slate-500 font-normal" :title="'唯一物理指纹: ' + node.agent_uuid">({{ node.agent_uuid.replace('node_', '') }})</span></span>
             <span>{{ node.agent_version?.startsWith('v') ? node.agent_version : 'v' + (node.agent_version || '1.0') }}</span>
           </div>
 

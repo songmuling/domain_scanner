@@ -31,6 +31,8 @@ scan.log
 # Checkpoints & runtime states
 checkpoint*.json
 config.json
+.agent_uuid
+*.uuid
 
 # Environments and OS
 .DS_Store
