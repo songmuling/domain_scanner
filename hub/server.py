@@ -1369,14 +1369,21 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         if parent_task:
                             p_task_id = parent_task["task_id"]
-                            # 确认当前节点在该主任务下没有其他未结算的活跃任务
+                            # 1. 严格权限校验：只有被勾选且实际参与了本次任务初始分片的节点，才允许接力扫尾（绝不拉未被选中的其他空闲节点）
+                            cur.execute("""
+                            SELECT 1 FROM task_assignments
+                            WHERE task_id = ? AND node_id = ? AND (is_aid = 0 OR is_aid IS NULL);
+                            """, (p_task_id, node_id))
+                            participated = cur.fetchone()
+
+                            # 2. 确认当前节点在该主任务下没有其他未结算的活跃任务
                             cur.execute("""
                             SELECT id FROM task_assignments
                             WHERE (task_id = ? OR parent_task_id = ?) AND node_id = ? AND status IN ('pending', 'running');
                             """, (p_task_id, p_task_id, node_id))
                             active_on_node = cur.fetchall()
 
-                            if not active_on_node:
+                            if participated and not active_on_node:
                                 # 寻找当前主任务下剩余工作量最大且处于 running 的慢节点分片
                                 cur.execute("""
                                 SELECT a.id, a.task_id, a.node_id, a.shard_num, a.shard_total, a.scanned, a.total, a.start_idx, a.end_idx
