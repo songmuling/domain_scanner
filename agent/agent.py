@@ -81,10 +81,23 @@ class ScanWorker:
         end_idx = ((shard_idx + 1) * total_all) // self.shard_total
         self.total = end_idx - start_idx
 
-        # 断点存盘
+        # 断点存盘与重跑逻辑
         clean_shard = canonical_shard.replace("/", "_")
         ckpt_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
-        last_ckpt, self.checked_count, self.found_count, found_domains = scanner.load_checkpoint(ckpt_file)
+
+        reset_ckpt = bool(self.task_info.get("reset_checkpoint", False))
+        if reset_ckpt and os.path.exists(ckpt_file):
+            try:
+                os.remove(ckpt_file)
+                print(f"\n[*] 收到强制从头重跑指令，已重置本地历史断点: {ckpt_file}")
+            except Exception as e:
+                print(f"[!] 清除断点失败: {e}")
+            last_ckpt = ""
+            self.checked_count = 0
+            self.found_count = 0
+            found_domains = []
+        else:
+            last_ckpt, self.checked_count, self.found_count, found_domains = scanner.load_checkpoint(ckpt_file)
 
         generator = scanner.get_sharded_generator(length, use_letters, use_digits, use_hyphen, self.suffix, shard_idx, self.shard_total)
         skipping = bool(last_ckpt)

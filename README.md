@@ -126,26 +126,47 @@ python3 domain_scanner.py [mode] [shard] [options]
 
 ---
 
-## 🌐 Domain Hub & Radar (分布式监控中心与 Web 淘金看板)
+## 🌐 Domain Hub & Agent (分布式调度中枢与多节点集群)
 
-本项目内置了微型可视化监控中心 `domain_hub`，位于 `domain_hub/` 目录：
+本项目采用轻量分布式 Hub-Agent 架构：
+- **`hub/`**：监控调度中心（基于纯 Python 3 标准库 + SQLite WAL + 原生响应式 WebUI）。
+- **`agent/`**：分布式扫描节点客户端（极速 DNS 初筛 + Verisign RDAP 终验，内存 < 20MB）。
 
 ### 1. 核心功能
-- **6 节点分布式雷达卡片**：实时展示各节点在线状态、心跳、当前分片、动态进度条、扫速（个/秒）及可用域名命中数。
+- **集群雷达监控**：多节点在线状态、心跳周期自动维护、动态进度条、扫速（个/秒）及可用域名命中数。
+- **任务分发与分片控制**：Web 界面自由定制字符位数（3~5位）、字母/数字/连字符`-`组合规则、一键按在线节点自动算切片分发。
+- **断点续扫与强制重跑控制**：
+  - **延续断点**：自动继承各节点本地 checkpoint，跳过已扫组合；
+  - **强制重跑**：支持清空本地断点从头全量重新跑，更新发现时间并保留星标收藏。
+- **存量可用资产批量复验**：Hub 端调度 6 组并发线程直连 Verisign RDAP 权威接口，一键复查库中可用资产，被抢注域名自动打上 `已失效` 状态。
 - **智能淘金专属过滤器**：
   - 🔤 **可读性过滤**：一键筛选含元音字母（`a/e/i/o/u`）的域名，剔除辅音乱码。
   - 🚫 **声母净化**：一键剔除米市生僻字（`q/x/z/v`）。
-  - 🔍 **正则/前缀搜索**：毫秒级筛选 `ai-*`, `go-*`, `*-os` 等特定极客前缀/后缀。
+  - 🔍 **正则/前缀/后缀搜索**：毫秒级筛选 `ai-*`, `go-*`, `*-os` 等特定极客前缀/后缀。
+- **生命周期管理**：支持 ⭐ 收藏、🛒 标为已购、🚫 已失效、🗑️ 垃圾桶，并支持直接调用 Verisign RDAP 权威实时二次复检。
 - **一键直达购买**：集成 Dynadot、Namesilo、阿里云等一键跳转查询与结算链接，告别手动复制。
-- **生命周期管理**：支持 ⭐ 收藏、🛒 标为已购、🗑️ 垃圾桶，并支持直接调用 Verisign RDAP 权威实时二次复检。
-- **零依赖与单容器部署**：基于纯 Python 3 标准库与 SQLite WAL 模式，配合 Docker Compose 一键启动。
 
-### 2. 部署方式 (在中心节点)
+### 2. 部署方式
+
+#### 🅰️ 部署 Hub 中心服务 (如 JP 节点)
 ```bash
-cd domain_hub
+cd hub
 docker compose up -d
 ```
 默认在 `8088` 端口启动服务。在 Nginx Proxy Manager (NPM) 等反代中添加 `domain.yourdomain.com` 转发至 `127.0.0.1:8088` 即可通过浏览器随时随地访问。
+
+#### 🅱️ 部署 Agent 扫描节点 (如 US / KR / 软路由)
+点击 Web 界面右上角 **【🤖 接入 Agent】**，一键获取包含集群鉴权 Token 的部署命令：
+- **Docker Run**:
+  ```bash
+  docker run -d --restart unless-stopped --name domain-agent --network host \
+    -e HUB_URL="http://<HUB_IP>:8088" -e HUB_TOKEN="<CLUSTER_TOKEN>" -e NODE_ID="Google-US" \
+    domain-agent:latest
+  ```
+- **软路由 / Python 脚本直接运行** (纯 Python 3 标准库，零 pip 依赖):
+  ```bash
+  python3 agent/agent.py --hub http://<HUB_IP>:8088 --token <CLUSTER_TOKEN> --name OpenWrt-Home
+  ```
 
 ---
 

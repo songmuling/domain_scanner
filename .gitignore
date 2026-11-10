@@ -8,6 +8,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 **/data/*.db*
+hub/data/
 domain_hub/data/
 data/
 

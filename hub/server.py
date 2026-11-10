@@ -144,7 +144,8 @@ def init_db_and_token():
                 ("length", "INTEGER DEFAULT 4"),
                 ("use_letters", "BOOLEAN DEFAULT 1"),
                 ("use_digits", "BOOLEAN DEFAULT 0"),
-                ("use_hyphen", "BOOLEAN DEFAULT 0")
+                ("use_hyphen", "BOOLEAN DEFAULT 0"),
+                ("reset_checkpoint", "BOOLEAN DEFAULT 0")
             ]:
                 if col not in task_cols:
                     try:
@@ -204,6 +205,84 @@ def check_verisign_rdap(domain):
     except Exception as e:
         return False, f"网络错误: {str(e)}"
     return False, "未知状态"
+
+BATCH_RECHECK_STATE = {
+    "is_running": False,
+    "mode": "",
+    "total": 0,
+    "checked": 0,
+    "taken": 0,
+    "still_available": 0,
+    "current_domain": "",
+    "started_at": None,
+    "finished_at": None
+}
+
+def start_batch_recheck(mode="all"):
+    global BATCH_RECHECK_STATE
+    if BATCH_RECHECK_STATE["is_running"]:
+        return False, "已有正在执行的批量复验任务"
+
+    with get_db() as conn:
+        cur = conn.cursor()
+        if mode and mode != "all":
+            cur.execute("SELECT domain FROM domains WHERE status = 'available' AND mode = ?;", (mode,))
+        else:
+            cur.execute("SELECT domain FROM domains WHERE status = 'available';")
+        target_domains = [row["domain"] for row in cur.fetchall()]
+
+    if not target_domains:
+        return False, "当前模式下没有可复核的未注册域名"
+
+    BATCH_RECHECK_STATE = {
+        "is_running": True,
+        "mode": mode,
+        "total": len(target_domains),
+        "checked": 0,
+        "taken": 0,
+        "still_available": 0,
+        "current_domain": "",
+        "started_at": datetime.now().isoformat(),
+        "finished_at": None
+    }
+
+    def _worker():
+        global BATCH_RECHECK_STATE
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        try:
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                futures = {executor.submit(check_verisign_rdap, d): d for d in target_domains}
+                for fut in as_completed(futures):
+                    if not BATCH_RECHECK_STATE["is_running"]:
+                        break
+                    dom = futures[fut]
+                    BATCH_RECHECK_STATE["current_domain"] = dom
+                    try:
+                        is_avail, reason = fut.result()
+                    except Exception:
+                        is_avail, reason = True, "复验异常跳过"
+
+                    BATCH_RECHECK_STATE["checked"] += 1
+                    with get_db() as conn:
+                        if not is_avail:
+                            BATCH_RECHECK_STATE["taken"] += 1
+                            conn.execute("""
+                            UPDATE domains SET status = 'registered', reason = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE domain = ?;
+                            """, (reason, dom))
+                        else:
+                            BATCH_RECHECK_STATE["still_available"] += 1
+                            conn.execute("""
+                            UPDATE domains SET reason = ?, updated_at = CURRENT_TIMESTAMP
+                            WHERE domain = ?;
+                            """, (reason, dom))
+                        conn.commit()
+        finally:
+            BATCH_RECHECK_STATE["is_running"] = False
+            BATCH_RECHECK_STATE["finished_at"] = datetime.now().isoformat()
+
+    threading.Thread(target=_worker, daemon=True).start()
+    return True, f"已启动对 {len(target_domains)} 个存量域名的权威复验"
 
 class HubHandler(BaseHTTPRequestHandler):
     server_version = "DomainHub-Master/2.0"
@@ -309,6 +388,9 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'purchased';")
                 total_purchased = cur.fetchone()[0]
 
+                cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'registered';")
+                total_registered = cur.fetchone()[0]
+
                 cur.execute("SELECT COUNT(*) FROM domains WHERE date(created_at, '+8 hours') = date('now', '+8 hours');")
                 today_found = cur.fetchone()[0]
 
@@ -332,6 +414,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     "total_available": total_available,
                     "total_starred": total_starred,
                     "total_purchased": total_purchased,
+                    "total_registered": total_registered,
                     "today_found": today_found,
                     "active_nodes": active_nodes,
                     "total_speed": total_speed,
@@ -508,6 +591,11 @@ class HubHandler(BaseHTTPRequestHandler):
             self.wfile.write(content)
             return
 
+        # 8. 存量资产批量复验状态 API
+        if path == "/api/domain/batch_recheck/status":
+            self.send_json({"code": 0, "data": BATCH_RECHECK_STATE})
+            return
+
         self.send_error(404, "Endpoint Not Found")
 
     def do_POST(self):
@@ -594,7 +682,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     # 检查 Master 是否有为该节点下发的新指令
                     cur = conn.cursor()
                     cur.execute("""
-                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.suffix, t.threads, t.status as task_status
+                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
                     WHERE a.node_id = ? AND t.status IN ('running', 'stopped')
@@ -625,6 +713,7 @@ class HubHandler(BaseHTTPRequestHandler):
                                 "use_letters": bool(assign_row["use_letters"]) if "use_letters" in row_keys and assign_row["use_letters"] is not None else True,
                                 "use_digits": bool(assign_row["use_digits"]) if "use_digits" in row_keys and assign_row["use_digits"] is not None else False,
                                 "use_hyphen": bool(assign_row["use_hyphen"]) if "use_hyphen" in row_keys and assign_row["use_hyphen"] is not None else False,
+                                "reset_checkpoint": bool(assign_row["reset_checkpoint"]) if "reset_checkpoint" in row_keys and assign_row["reset_checkpoint"] is not None else False,
                                 "suffix": assign_row["suffix"],
                                 "shard_num": assign_row["shard_num"],
                                 "shard_total": assign_row["shard_total"],
@@ -692,6 +781,7 @@ class HubHandler(BaseHTTPRequestHandler):
             use_letters = bool(data.get("use_letters", True))
             use_digits = bool(data.get("use_digits", False))
             use_hyphen = bool(data.get("use_hyphen", False))
+            reset_checkpoint = bool(data.get("reset_checkpoint", False))
             suffix = data.get("suffix", "com").strip().lower()
             threads = int(data.get("threads", 25))
             selected_nodes = data.get("nodes", [])
@@ -743,9 +833,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 创建新任务
                 conn.execute("""
-                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads, target_nodes, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'running');
-                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, suffix, threads, json.dumps(selected_nodes)))
+                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, reset_checkpoint, suffix, threads, target_nodes, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running');
+                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes)))
 
                 # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)
                 for idx, n_id in enumerate(selected_nodes, start=1):
@@ -868,6 +958,20 @@ class HubHandler(BaseHTTPRequestHandler):
                     "reason": reason
                 }
             })
+            return
+
+        # 6.1 存量可用资产批量复验
+        if path == "/api/domain/batch_recheck":
+            data = self.read_json_body()
+            mode = data.get("mode", "all")
+            ok, msg = start_batch_recheck(mode)
+            self.send_json({"code": 0 if ok else 1, "msg": msg, "data": BATCH_RECHECK_STATE})
+            return
+
+        # 6.2 停止批量复验
+        if path == "/api/domain/batch_recheck/stop":
+            BATCH_RECHECK_STATE["is_running"] = False
+            self.send_json({"code": 0, "msg": "批量复验任务已请求停止"})
             return
 
         # 7. 历史数据批量导入

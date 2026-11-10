@@ -160,8 +160,9 @@
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
         <div class="text-xs font-medium text-slate-400">我的星标收藏</div>
         <div class="text-2xl font-black text-amber-400 mt-1">{{ stats.total_starred || 0 }}</div>
-        <div class="text-[11px] text-slate-400 mt-1">
-          已购买: <span class="text-emerald-400 font-semibold">{{ stats.total_purchased || 0 }}</span>
+        <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+          <span>已购: <b class="text-emerald-400">{{ stats.total_purchased || 0 }}</b></span>
+          <span v-if="stats.total_registered" class="text-rose-400">失效: <b>{{ stats.total_registered }}</b></span>
         </div>
       </div>
 
@@ -296,6 +297,11 @@
         </div>
 
         <div class="md:col-span-5 flex flex-wrap items-center justify-end gap-2 text-xs">
+          <button @click="openBatchRecheckModal = true"
+            class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 font-medium shadow-sm">
+            <span>🔄 存量资产批量复验</span>
+          </button>
+
           <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
             :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
             class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1">
@@ -336,6 +342,8 @@
                   <span v-if="item.status === 'starred'" class="text-amber-400 text-xs" title="已收藏">⭐</span>
                   <span v-if="item.status === 'purchased'"
                     class="text-emerald-400 text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">已购</span>
+                  <span v-if="item.status === 'registered'"
+                    class="text-rose-400 text-xs font-semibold px-1.5 py-0.5 rounded bg-rose-950/60 border border-rose-800/40" :title="item.reason || '已被抢注'">已失效</span>
                 </div>
               </td>
 
@@ -511,6 +519,32 @@
               <label class="block text-slate-300 font-medium mb-1">顶级后缀:</label>
               <input v-model="dispatchForm.suffix" type="text"
                 class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+            </div>
+          </div>
+
+          <!-- 4. 扫描起点与断点控制 -->
+          <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2">
+            <label class="block text-slate-400 font-medium">4. 扫描起点与断点策略 (重跑控制):</label>
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
+                :class="!dispatchForm.reset_checkpoint ? 'border-indigo-600 bg-indigo-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
+                <input type="radio" :value="false" v-model="dispatchForm.reset_checkpoint" class="text-indigo-600 focus:ring-0">
+                <div>
+                  <div class="font-semibold text-xs">延续断点续扫</div>
+                  <div class="text-[10px] text-slate-500">跳过已扫过的域名 (推荐)</div>
+                </div>
+              </label>
+              <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
+                :class="dispatchForm.reset_checkpoint ? 'border-amber-600 bg-amber-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
+                <input type="radio" :value="true" v-model="dispatchForm.reset_checkpoint" class="text-amber-500 focus:ring-0">
+                <div>
+                  <div class="font-semibold text-xs text-amber-300">强制从头重跑</div>
+                  <div class="text-[10px] text-amber-500/80">从第 1 个域名重新全扫</div>
+                </div>
+              </label>
+            </div>
+            <div v-if="dispatchForm.reset_checkpoint" class="text-[10px] text-amber-400/90 bg-amber-950/30 p-2 rounded-lg border border-amber-800/40">
+              ⚠️ 风险提示：重跑将强制清空节点本地历史断点，从头重新扫描完整字典。数据库已发现的域名仍将保留并更新时间，不会丢失你的星标收藏。
             </div>
           </div>
 
@@ -737,6 +771,76 @@
       </div>
     </div>
 
+    <!-- 模态框 4：存量资产权威批量复验 -->
+    <div v-if="openBatchRecheckModal"
+      class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+          <h3 class="text-base font-bold text-white flex items-center gap-2">
+            <span>🔄</span> 存量可用资产批量权威复验
+          </h3>
+          <button @click="openBatchRecheckModal = false" class="text-slate-400 hover:text-white">✕</button>
+        </div>
+
+        <div class="space-y-4 text-xs">
+          <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
+            <div class="text-slate-300 font-medium">复验模式与范围:</div>
+            <div class="text-slate-400 text-[11px] leading-relaxed">
+              针对数据库中已标记为 <b class="text-emerald-400">可用 (available)</b> 的存量域名，直接通过 Verisign 官方 RDAP 接口执行实时复查。若已被抢注，系统将自动将其状态变更为 <b class="text-rose-400">已失效 (registered)</b>，绝不会漏扫或影响您的星标收藏。
+            </div>
+            <div class="pt-2">
+              <label class="block text-slate-400 mb-1">选择复验模式分类:</label>
+              <select v-model="batchRecheckScope" :disabled="batchRecheckState.is_running"
+                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs">
+                <option value="all">全部模式的所有存量可用域名</option>
+                <option v-for="m in modeOptions.filter(x => x.id !== 'all')" :key="m.id" :value="m.id">
+                  仅复验模式: {{ m.label }}
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <!-- 进度展示 -->
+          <div v-if="batchRecheckState.is_running || batchRecheckState.total > 0"
+            class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
+            <div class="flex items-center justify-between text-xs">
+              <span class="text-slate-400">复验进度:</span>
+              <span class="font-mono text-indigo-400 font-bold">
+                {{ batchRecheckState.checked }} / {{ batchRecheckState.total }}
+                ({{ batchRecheckState.total ? Math.round((batchRecheckState.checked / batchRecheckState.total) * 100) : 0 }}%)
+              </span>
+            </div>
+            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+              <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full transition-all duration-300"
+                :style="{ width: (batchRecheckState.total ? ((batchRecheckState.checked / batchRecheckState.total) * 100) : 0) + '%' }"></div>
+            </div>
+            <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-900">
+              <span class="text-emerald-400">✅ 仍可注册: <b>{{ batchRecheckState.still_available }}</b></span>
+              <span class="text-rose-400">🚫 已被抢注: <b>{{ batchRecheckState.taken }}</b></span>
+              <span class="text-slate-500 font-mono text-[10px] truncate max-w-[150px]">当前: {{ batchRecheckState.current_domain || '-' }}</span>
+            </div>
+          </div>
+
+          <div class="text-[11px] text-amber-400/90 bg-amber-950/20 p-2.5 rounded-lg border border-amber-800/40">
+            ⚡ 说明：批量复验直接由 Hub 调度 6 组并发线程直连 Verisign 权威接口，无需依赖 Agent 节点。执行期间请勿频繁刷新。
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-3 border-t border-slate-800">
+          <button @click="openBatchRecheckModal = false"
+            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">关闭</button>
+          <button v-if="batchRecheckState.is_running" @click="stopBatchRecheck"
+            class="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl shadow-lg transition">
+            中止复验 ⏹️
+          </button>
+          <button v-else @click="startBatchRecheck"
+            class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-xl shadow-lg transition">
+            开始批量权威复验 🚀
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div v-if="toastMsg"
       class="fixed bottom-6 right-6 z-50 bg-slate-800 text-white px-4 py-2.5 rounded-xl border border-slate-700 shadow-2xl text-xs font-medium flex items-center gap-2">
@@ -776,10 +880,22 @@
           use_letters: true,
           use_digits: false,
           use_hyphen: true,
+          reset_checkpoint: false,
           threads: 25,
           suffix: 'com'
         });
         const selectedNodeList = ref([]);
+
+        const openBatchRecheckModal = ref(false);
+        const batchRecheckScope = ref('all');
+        const batchRecheckState = ref({
+          is_running: false,
+          total: 0,
+          checked: 0,
+          taken: 0,
+          still_available: 0,
+          current_domain: ''
+        });
 
         const activeAgentTab = ref('docker_run');
         const isEditingToken = ref(false);
@@ -839,6 +955,7 @@
           { id: 'available', label: '可用池', icon: '🎯' },
           { id: 'starred', label: '我的收藏', icon: '⭐' },
           { id: 'purchased', label: '已购买', icon: '🛒' },
+          { id: 'registered', label: '已失效', icon: '🚫' },
           { id: 'discarded', label: '垃圾桶', icon: '🗑️' },
           { id: 'all', label: '全部状态', icon: '📁' }
         ];
@@ -1024,6 +1141,7 @@
                 use_letters: dispatchForm.value.use_letters,
                 use_digits: dispatchForm.value.use_digits,
                 use_hyphen: dispatchForm.value.use_hyphen,
+                reset_checkpoint: dispatchForm.value.reset_checkpoint,
                 suffix: dispatchForm.value.suffix,
                 threads: dispatchForm.value.threads,
                 nodes: validSelected
@@ -1114,6 +1232,43 @@
           }
         };
 
+        const fetchBatchRecheckStatus = async () => {
+          try {
+            const res = await fetch('/api/domain/batch_recheck/status');
+            const data = await res.json();
+            if (data.code === 0 && data.data) {
+              batchRecheckState.value = data.data;
+            }
+          } catch (e) { }
+        };
+
+        const startBatchRecheck = async () => {
+          if (!confirm('确定开始对所选范围的存量可用资产执行 Verisign 权威 RDAP 批量复验吗？')) return;
+          try {
+            const res = await fetch('/api/domain/batch_recheck', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ mode: batchRecheckScope.value })
+            });
+            const data = await res.json();
+            showToast(data.msg);
+            fetchBatchRecheckStatus();
+          } catch (e) {
+            showToast('启动批量复验失败');
+          }
+        };
+
+        const stopBatchRecheck = async () => {
+          try {
+            const res = await fetch('/api/domain/batch_recheck/stop', { method: 'POST' });
+            const data = await res.json();
+            showToast(data.msg);
+            fetchBatchRecheckStatus();
+          } catch (e) {
+            showToast('停止请求失败');
+          }
+        };
+
         const submitImport = async () => {
           if (!importText.value.trim()) return;
           importing.value = true;
@@ -1159,6 +1314,9 @@
           setInterval(() => {
             fetchStats();
             fetchNodes();
+            if (openBatchRecheckModal.value || batchRecheckState.value.is_running) {
+              fetchBatchRecheckStatus();
+            }
           }, 2500);
         });
 
@@ -1173,6 +1331,8 @@
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
           submitDispatch, stopClusterTask, deleteNode,
           openTokenModal, openImportModal, importText, importMode, importing,
+          openBatchRecheckModal, batchRecheckScope, batchRecheckState,
+          startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
           copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
           submitImport, exportCurrent, refreshAll
         };
