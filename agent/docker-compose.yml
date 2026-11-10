@@ -5,8 +5,11 @@ services:
     container_name: domain-agent
     restart: unless-stopped
     network_mode: host
+    volumes:
+      - ./:/app
     environment:
       - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1
       - HUB_URL=${HUB_URL:-http://your-hub-ip:8088}
       - HUB_TOKEN=${HUB_TOKEN:-}
       - NODE_ID=${NODE_ID:-My-Node-Name}
