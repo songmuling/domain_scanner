@@ -409,41 +409,75 @@ def build_domain_filters(params):
     prefix = params.get("prefix", [""])[0].strip().lower()
     suffix = params.get("suffix", [""])[0].strip().lower()
 
-    length_param = params.get("length", [""])[0].strip()
-    char_type_param = params.get("char_type", [""])[0].strip()
-    has_hyphen_param = params.get("has_hyphen", [""])[0].strip()
-
     where_clauses = []
     bind_params = []
 
-    if status == "starred":
+    # 1. 收藏过滤与基础状态
+    only_starred = params.get("starred", ["0"])[0] in ("1", "true") or status == "starred"
+    if only_starred:
         where_clauses.append("is_starred = 1")
     elif status != "all":
         where_clauses.append("status = ?")
         bind_params.append(status)
 
-    # 1. 字符位数维度 (支持按模式代号如 4letter-、去除连字符纯字符数、或总字符数智能匹配)
-    if length_param.isdigit():
-        l_val = int(length_param)
-        where_clauses.append("(mode LIKE ? OR length(substr(domain, 1, instr(domain, '.') - 1)) = ? OR length(replace(substr(domain, 1, instr(domain, '.') - 1), '-', '')) = ?)")
-        bind_params.extend([f"{l_val}%", l_val, l_val])
+    # 2. 字符位数多选维度 (支持 3, 4, 5, 6 等多个勾选框，智能匹配前缀模式及纯字符长度)
+    raw_lengths = params.get("lengths", []) + params.get("length", [])
+    selected_lengths = []
+    for item in raw_lengths:
+        for part in str(item).split(","):
+            part = part.strip()
+            if part.isdigit():
+                selected_lengths.append(int(part))
+    selected_lengths = sorted(list(set(selected_lengths)))
 
-    # 2. 字符组成维度 (纯字母 / 纯数字 / 字母+数字混合)
-    if char_type_param == "letter":
-        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[0-9]*'")
-    elif char_type_param == "num":
-        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[0-9]*' AND substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[a-z]*'")
-    elif char_type_param == "mix":
-        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[0-9]*' AND substr(domain, 1, instr(domain, '.') - 1) GLOB '*[a-z]*'")
+    if selected_lengths:
+        len_or_clauses = []
+        for l_val in selected_lengths:
+            len_or_clauses.append("(mode LIKE ? OR length(substr(domain, 1, instr(domain, '.') - 1)) = ? OR length(replace(substr(domain, 1, instr(domain, '.') - 1), '-', '')) = ?)")
+            bind_params.extend([f"{l_val}%", l_val, l_val])
+        where_clauses.append("(" + " OR ".join(len_or_clauses) + ")")
 
-    # 3. 连字符维度 (含连字符 “-” / 不含连字符)
-    if has_hyphen_param == "1":
-        where_clauses.append("domain LIKE '%-%'")
-    elif has_hyphen_param == "0":
-        where_clauses.append("domain NOT LIKE '%-%'")
+    # 3. 字符组成维度 (字母 / 数字 / 连字符 三复选框模式)
+    has_new_char_param = "letters" in params or "digits" in params or "hyphen" in params
+    if has_new_char_param:
+        chk_letter = params.get("letters", ["0"])[0] in ("1", "true")
+        chk_digit = params.get("digits", ["0"])[0] in ("1", "true")
+        chk_hyphen = params.get("hyphen", ["0"])[0] in ("1", "true")
 
-    # 兼容历史 mode 传参 (若未指定三维度，但指定了具体 mode)
-    if not length_param and not char_type_param and not has_hyphen_param and mode and mode != "all":
+        # 若 3 项全选或全不选，则代表不限制字符组成
+        all_or_none = (chk_letter and chk_digit and chk_hyphen) or (not chk_letter and not chk_digit and not chk_hyphen)
+        if not all_or_none:
+            # 连字符判定
+            if chk_hyphen:
+                where_clauses.append("domain LIKE '%-%'")
+            else:
+                where_clauses.append("domain NOT LIKE '%-%'")
+
+            # 字母与数字判定
+            name_expr = "substr(domain, 1, instr(domain, '.') - 1)"
+            if chk_letter and not chk_digit:
+                where_clauses.append(f"{name_expr} NOT GLOB '*[0-9]*'")
+            elif chk_digit and not chk_letter:
+                where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} NOT GLOB '*[a-z]*'")
+    else:
+        # 兼容旧单选参数 char_type / has_hyphen
+        char_type_param = params.get("char_type", [""])[0].strip()
+        leg_hyphen = params.get("has_hyphen", [""])[0].strip()
+        name_expr = "substr(domain, 1, instr(domain, '.') - 1)"
+        if char_type_param == "letter":
+            where_clauses.append(f"{name_expr} NOT GLOB '*[0-9]*'")
+        elif char_type_param == "num":
+            where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} NOT GLOB '*[a-z]*'")
+        elif char_type_param == "mix":
+            where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} GLOB '*[a-z]*'")
+
+        if leg_hyphen == "1":
+            where_clauses.append("domain LIKE '%-%'")
+        elif leg_hyphen == "0":
+            where_clauses.append("domain NOT LIKE '%-%'")
+
+    # 兼容历史 mode 传参 (若未指定维度，但指定了具体 mode)
+    if not selected_lengths and not has_new_char_param and not params.get("char_type", [""])[0] and mode and mode != "all":
         where_clauses.append("mode = ?")
         bind_params.append(mode)
 

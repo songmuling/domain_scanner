@@ -175,8 +175,9 @@
       color: #e11d48 !important;
     }
 
-    html:not(.dark) .text-amber-400 {
-      color: #d97706 !important;
+    html:not(.dark) .text-amber-400,
+    html:not(.dark) .text-amber-300 {
+      color: #b45309 !important;
     }
 
     html:not(.dark) .text-sky-400 {
@@ -436,11 +437,12 @@
         </div>
       </div>
 
-      <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
-        <div class="text-xs font-medium text-slate-400">我的星标收藏</div>
+      <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl cursor-pointer hover:border-amber-500/50 transition group"
+        @click="toggleOnlyStarred" title="点击快速切换【只看我的收藏】">
+        <div class="text-xs font-medium text-slate-400 group-hover:text-amber-400 transition">我的星标收藏</div>
         <div class="text-2xl font-black text-amber-400 mt-1">{{ stats.total_starred || 0 }}</div>
         <div class="text-[11px] text-slate-400 mt-1">
-          <span>点击下方“我的收藏”标签快速筛选</span>
+          <span :class="onlyStarred ? 'text-amber-400 font-bold' : ''">{{ onlyStarred ? '● 正在查看收藏 (点击还原全部)' : '点击快速切换只看收藏' }}</span>
         </div>
       </div>
 
@@ -543,173 +545,146 @@
       </div>
     </section>
 
-    <!-- 域名探索与资产库控制台 -->
-    <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
-      <!-- 标签栏与操作栏 -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-        <div class="flex items-center space-x-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800 overflow-x-auto">
-          <button v-for="tab in statusTabs" :key="tab.id" @click="currentStatus = tab.id; page = 1; fetchDomains()"
-            :class="currentStatus === tab.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'"
-            class="px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5 whitespace-nowrap">
-            <span>{{ tab.icon }}</span>
-            <span>{{ tab.label }}</span>
+    <!-- 域名探索与资产库控制台 (极简紧凑 2 排布局) -->
+    <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5 sm:p-4 space-y-2.5">
+      <!-- 第 1 排：搜索、前后缀、只看收藏开关与全局操作 -->
+      <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+        <!-- 左侧输入与收藏 -->
+        <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[300px]">
+          <!-- 搜索框 -->
+          <div class="relative flex-1 min-w-[200px] max-w-sm">
+            <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()" placeholder="🔍 搜索域名、包含关键字 (回车查询)..."
+              class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+          </div>
+          <!-- 前缀 -->
+          <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="前缀如: ai-"
+            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+          <!-- 后缀 -->
+          <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="后缀如: -os"
+            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+
+          <!-- ⭐ 只看我的收藏 (点击只看收藏，再点取消) -->
+          <button @click="toggleOnlyStarred"
+            :class="onlyStarred ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 font-semibold shadow-sm' : 'bg-slate-900 text-slate-400 border-slate-700/80 hover:text-slate-200'"
+            class="px-2.5 py-1.5 rounded-lg border text-xs transition flex items-center gap-1.5 shrink-0"
+            :title="onlyStarred ? '当前正处于【只看收藏】，点击恢复查看全部' : '点击只看我的收藏'">
+            <span>⭐</span>
+            <span>只看收藏</span>
+            <span v-if="stats.total_starred > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono"
+              :class="onlyStarred ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-800 text-slate-400'">
+              {{ stats.total_starred }}
+            </span>
           </button>
         </div>
 
-        <div class="flex items-center gap-2">
+        <!-- 右侧操作与重置 -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button v-if="hasActiveFilter" @click="resetFilters"
+            class="px-2.5 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition flex items-center gap-1">
+            <span>↺</span> 重置
+          </button>
           <button @click="openBatchRecheckModal = true"
             class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 text-xs font-medium shadow-sm">
-            <span>🔄 存量资产批量复验</span>
+            <span>🔄 存量复验</span>
           </button>
           <button @click="exportCurrent"
             class="px-2.5 py-1.5 rounded-lg border border-slate-700 bg-slate-800/80 text-slate-300 hover:text-white hover:bg-slate-700 transition flex items-center gap-1 text-xs font-medium">
-            <span>📤 导出当前清单</span>
+            <span>📤 导出清单</span>
           </button>
         </div>
       </div>
 
-      <!-- 核心三维度筛选栏 (与新建任务规则完全对齐) -->
-      <div class="flex flex-wrap items-center justify-between gap-3 bg-slate-950/70 p-3 rounded-xl border border-slate-800">
-        <div class="flex flex-wrap items-center gap-3 sm:gap-4 text-xs">
-          <!-- 1. 字符位数 -->
-          <div class="flex items-center gap-1.5">
+      <!-- 第 2 排：位数多选(3 4 5 6)、字符多选(字母 数字 连字符)、靓号雷达下拉与淘金药丸 -->
+      <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-xs">
+        <div class="flex flex-wrap items-center gap-2.5 lg:gap-3.5">
+          <!-- 1. 位数勾选框 (3 4 5 6) -->
+          <div class="flex items-center gap-1.5 shrink-0">
             <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
               <span>📏</span> 位数:
             </span>
-            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
-              <button v-for="opt in lengthFilterOptions" :key="opt.value"
-                @click="filterLength = opt.value; currentMode = ''; page = 1; fetchDomains()"
-                :class="filterLength === opt.value ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
-                {{ opt.label }}
-              </button>
+            <div class="flex items-center gap-2 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800">
+              <label v-for="len in [3, 4, 5, 6]" :key="len"
+                class="inline-flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white select-none text-xs">
+                <input type="checkbox" :value="len" v-model="filterLengths" @change="page = 1; fetchDomains()"
+                  class="accent-indigo-600 cursor-pointer w-3.5 h-3.5 rounded">
+                <span>{{ len }}位</span>
+              </label>
             </div>
           </div>
 
-          <!-- 2. 字符组成 -->
-          <div class="flex items-center gap-1.5">
+          <!-- 2. 字符勾选框 (字母 / 数字 / 连字符) -->
+          <div class="flex items-center gap-1.5 shrink-0">
             <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
               <span>🔤</span> 字符:
             </span>
-            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
-              <button v-for="opt in charTypeFilterOptions" :key="opt.value"
-                @click="filterCharType = opt.value; currentMode = ''; page = 1; fetchDomains()"
-                :class="filterCharType === opt.value ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
-                {{ opt.label }}
-              </button>
+            <div class="flex items-center gap-2 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800">
+              <label class="inline-flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white select-none text-xs">
+                <input type="checkbox" v-model="filterLetter" @change="page = 1; fetchDomains()"
+                  class="accent-indigo-600 cursor-pointer w-3.5 h-3.5 rounded">
+                <span>字母</span>
+              </label>
+              <label class="inline-flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white select-none text-xs">
+                <input type="checkbox" v-model="filterDigit" @change="page = 1; fetchDomains()"
+                  class="accent-indigo-600 cursor-pointer w-3.5 h-3.5 rounded">
+                <span>数字</span>
+              </label>
+              <label class="inline-flex items-center gap-1 cursor-pointer text-slate-300 hover:text-white select-none text-xs">
+                <input type="checkbox" v-model="filterHyphen" @change="page = 1; fetchDomains()"
+                  class="accent-indigo-600 cursor-pointer w-3.5 h-3.5 rounded">
+                <span>连字符(-)</span>
+              </label>
             </div>
           </div>
 
-          <!-- 3. 连字符设置 (二选一) -->
-          <div class="flex items-center gap-1.5">
-            <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
-              <span>➖</span> 连字符:
+          <!-- 3. 靓号雷达下拉 -->
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span class="text-indigo-400 font-medium text-[11px] flex items-center gap-1">
+              <span>💎</span> 雷达:
             </span>
-            <div class="flex p-0.5 bg-slate-900 rounded-lg border border-slate-800">
-              <button @click="filterHyphen = '1'; currentMode = ''; page = 1; fetchDomains()"
-                :class="filterHyphen === '1' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
-                包含 “-”
-              </button>
-              <button @click="filterHyphen = '0'; currentMode = ''; page = 1; fetchDomains()"
-                :class="filterHyphen === '0' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400 hover:text-slate-200'"
-                class="px-2.5 py-1 rounded text-[11px] font-medium transition">
-                不含 “-”
-              </button>
-            </div>
+            <select v-model="filterRepeat" @change="page = 1; fetchDomains()"
+              class="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+              <option v-for="opt in repeatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <select v-model="filterSeqCount" @change="page = 1; fetchDomains()"
+              class="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+              <option v-for="opt in seqCountOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <select v-if="filterSeqCount" v-model="filterSeqDir" @change="page = 1; fetchDomains()"
+              class="bg-slate-900 border border-slate-700/80 rounded-lg px-1.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500" title="顺子方向">
+              <option v-for="opt in seqDirOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
+            <select v-model="filterPattern" @change="page = 1; fetchDomains()"
+              class="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+              <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+            </select>
           </div>
-        </div>
 
-        <!-- 筛选摘要与重置按钮 -->
-        <div class="flex items-center gap-2 text-xs">
-          <div v-if="hasActiveFilter" class="flex items-center gap-2">
-            <span class="text-[11px] text-slate-400">当前条件:</span>
-            <span class="font-mono text-indigo-300 font-bold text-xs px-2.5 py-0.5 bg-indigo-950/80 rounded-md border border-indigo-800/60 shadow-sm">
-              {{ activeFilterSummary }}
-            </span>
-            <button @click="resetFilters"
-              class="px-2 py-0.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded border border-slate-700 transition flex items-center gap-1">
-              <span>↺</span> 重置
+          <!-- 4. 淘金辅助微调 (双拼、元音、声母) -->
+          <div class="flex items-center gap-1.5 shrink-0">
+            <button @click="isPronounceable = !isPronounceable; page = 1; fetchDomains()"
+              :class="isPronounceable ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
+              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="元音辅音交替易读双拼">
+              <span>🗣️ 双拼</span>
+            </button>
+            <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
+              :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
+              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="至少包含一个元音 (a/e/i/o/u)">
+              <span>🔤 元音</span>
+            </button>
+            <button @click="excludeRare = !excludeRare; page = 1; fetchDomains()"
+              :class="excludeRare ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
+              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="剔除生僻声母 (q/x/z/v/y)">
+              <span>🚫 避冷门</span>
             </button>
           </div>
-          <div v-else class="text-[11px] text-slate-500">
-            全部组合模式 (全量)
-          </div>
-        </div>
-      </div>
-
-      <!-- 💎 靓号雷达与结构特征筛选栏 (连字、顺子、回文、AABB等) -->
-      <div class="flex flex-wrap items-center gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs">
-        <div class="flex items-center gap-1.5 text-indigo-400 font-semibold text-[11px] shrink-0">
-          <span>💎</span> <span>靓号雷达:</span>
         </div>
 
-        <!-- 1. 连字/豹子 -->
-        <div class="flex items-center gap-1.5">
-          <span class="text-slate-400 text-[11px]">连字/豹子:</span>
-          <select v-model="filterRepeat" @change="page = 1; fetchDomains()"
-            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
-            <option v-for="opt in repeatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-        </div>
-
-        <!-- 2. 连号/顺子及方向 -->
-        <div class="flex items-center gap-1.5">
-          <span class="text-slate-400 text-[11px]">连号/顺子:</span>
-          <select v-model="filterSeqCount" @change="page = 1; fetchDomains()"
-            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
-            <option v-for="opt in seqCountOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-          <select v-if="filterSeqCount" v-model="filterSeqDir" @change="page = 1; fetchDomains()"
-            class="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500" title="顺子方向">
-            <option v-for="opt in seqDirOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-        </div>
-
-        <!-- 3. 形态结构 (回文 / AABB / ABAB / ABBA / AAAB / BAAA) -->
-        <div class="flex items-center gap-1.5">
-          <span class="text-slate-400 text-[11px]">形态结构:</span>
-          <select v-model="filterPattern" @change="page = 1; fetchDomains()"
-            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
-            <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
-          </select>
-        </div>
-
-        <!-- 4. 自然发音 (易读双拼) -->
-        <button @click="isPronounceable = !isPronounceable; page = 1; fetchDomains()"
-          :class="isPronounceable ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
-          class="px-2.5 py-1 rounded-lg border text-[11px] transition flex items-center gap-1">
-          <span>🗣️ 自然发音 (易读双拼)</span>
-        </button>
-      </div>
-
-      <!-- 筛选工具栏 (搜索、前后缀、元音及声母) -->
-      <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-        <div class="md:col-span-5 relative">
-          <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()" placeholder="🔍 搜索域名、包含关键字 (回车查询)..."
-            class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
-        </div>
-
-        <div class="md:col-span-3 flex gap-2">
-          <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="前缀如: ai-, go-"
-            class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
-          <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="后缀如: -os, -ai"
-            class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
-        </div>
-
-        <div class="md:col-span-4 flex flex-wrap items-center justify-end gap-2 text-xs">
-          <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
-            :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
-            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-medium">
-            <span>🔤 包含元音 (可读)</span>
-          </button>
-
-          <button @click="excludeRare = !excludeRare; page = 1; fetchDomains()"
-            :class="excludeRare ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
-            class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1 font-medium">
-            <span>🚫 剔除声母 q/x/z/v</span>
-          </button>
+        <!-- 筛选摘要 -->
+        <div v-if="hasActiveFilter" class="hidden xl:flex items-center gap-1.5 text-xs shrink-0">
+          <span class="text-[11px] text-slate-500">已筛:</span>
+          <span class="font-mono text-indigo-300 font-medium text-[11px] px-2 py-0.5 bg-indigo-950/80 rounded border border-indigo-800/60 max-w-[200px] truncate" :title="activeFilterSummary">
+            {{ activeFilterSummary }}
+          </span>
         </div>
       </div>
 
@@ -1298,25 +1273,19 @@
         const page = ref(1);
         const limit = ref(50);
 
-        const currentStatus = ref('available');
+        const onlyStarred = ref(false);
+        const toggleOnlyStarred = () => {
+          onlyStarred.value = !onlyStarred.value;
+          page.value = 1;
+          fetchDomains();
+        };
+        const currentStatus = computed(() => onlyStarred.value ? 'starred' : 'available');
+
         const currentMode = ref('');
-        const filterLength = ref('');
-        const filterCharType = ref('');
-        const filterHyphen = ref('1');
-
-        const lengthFilterOptions = [
-          { value: '', label: '全部' },
-          { value: '3', label: '3 位' },
-          { value: '4', label: '4 位' },
-          { value: '5', label: '5 位' }
-        ];
-
-        const charTypeFilterOptions = [
-          { value: '', label: '全部' },
-          { value: 'letter', label: '纯字母' },
-          { value: 'num', label: '纯数字' },
-          { value: 'mix', label: '数字字母混合' }
-        ];
+        const filterLengths = ref([]); // 3, 4, 5, 6 多选数组
+        const filterLetter = ref(false);
+        const filterDigit = ref(false);
+        const filterHyphen = ref(false);
 
         const filterRepeat = ref('');
         const filterSeqCount = ref('');
@@ -1326,53 +1295,67 @@
 
         const repeatOptions = [
           { value: '', label: '不限连字' },
-          { value: '2', label: '2连字 (如 aa, 88)' },
-          { value: '3', label: '3连字/豹子 (如 aaa, 888)' },
-          { value: '4', label: '4连字/炸弹 (如 aaaa, 8888)' }
+          { value: '2', label: '2连字' },
+          { value: '3', label: '3连(豹子)' },
+          { value: '4', label: '4连(炸弹)' }
         ];
 
         const seqCountOptions = [
           { value: '', label: '不限顺子' },
-          { value: '3', label: '3连号/顺子 (如 abc, 123)' },
-          { value: '4', label: '4连号/长顺 (如 abcd, 1234)' },
-          { value: '5', label: '5连号/通天顺 (如 abcde)' }
+          { value: '3', label: '3连顺 (如 abc)' },
+          { value: '4', label: '4连顺 (如 abcd)' },
+          { value: '5', label: '5连顺 (通天顺)' }
         ];
 
         const seqDirOptions = [
-          { value: 'any', label: '↕ 正反双向' },
-          { value: 'asc', label: '↗ 仅正序' },
-          { value: 'desc', label: '↘ 仅倒序' }
+          { value: 'any', label: '↕ 双向' },
+          { value: 'asc', label: '↗ 正序' },
+          { value: 'desc', label: '↘ 倒序' }
         ];
 
         const patternOptions = [
-          { value: '', label: '不限结构' },
-          { value: 'palindrome', label: '🪞 回文 (对称如 aba, abcba)' },
-          { value: 'aabb', label: '👯 AABB (如 aabbc)' },
-          { value: 'abab', label: '🎵 ABAB (如 ababc)' },
-          { value: 'abba', label: '🥪 ABBA (如 abbac)' },
-          { value: 'aaab', label: '👑 AAAB (如 aaabc)' },
-          { value: 'baaa', label: '🌟 BAAA (如 caaa)' }
+          { value: '', label: '不限形态' },
+          { value: 'palindrome', label: '🪞 回文' },
+          { value: 'aabb', label: '👯 AABB' },
+          { value: 'abab', label: '🎵 ABAB' },
+          { value: 'abba', label: '🥪 ABBA' },
+          { value: 'aaab', label: '👑 AAAB' },
+          { value: 'baaa', label: '🌟 BAAA' }
         ];
 
         const hasActiveFilter = computed(() => {
-          return Boolean(filterLength.value || filterCharType.value || filterHyphen.value !== '1' || filterRepeat.value || filterSeqCount.value || filterPattern.value || isPronounceable.value || (currentMode.value && currentMode.value !== 'all'));
+          return Boolean(
+            onlyStarred.value ||
+            filterLengths.value.length > 0 ||
+            filterLetter.value ||
+            filterDigit.value ||
+            filterHyphen.value ||
+            filterRepeat.value ||
+            filterSeqCount.value ||
+            filterPattern.value ||
+            isPronounceable.value ||
+            searchKeyword.value ||
+            prefixFilter.value ||
+            suffixFilter.value ||
+            hasVowel.value ||
+            excludeRare.value ||
+            (currentMode.value && currentMode.value !== 'all')
+          );
         });
 
         const activeFilterSummary = computed(() => {
-          if (!hasActiveFilter.value) return '全部组合 (带杠)';
-          if (currentMode.value && currentMode.value !== 'all' && !filterLength.value && !filterCharType.value && !filterRepeat.value && !filterSeqCount.value && !filterPattern.value && !isPronounceable.value) {
-            return currentMode.value;
-          }
+          if (!hasActiveFilter.value) return '全部';
           const parts = [];
-          if (filterLength.value) parts.push(`${filterLength.value}位`);
-          if (filterCharType.value === 'letter') parts.push('纯字母');
-          else if (filterCharType.value === 'num') parts.push('纯数字');
-          else if (filterCharType.value === 'mix') parts.push('数字字母混合');
+          if (onlyStarred.value) parts.push('⭐ 我的收藏');
+          if (filterLengths.value.length > 0) parts.push(`${filterLengths.value.join('/')}位`);
 
-          if (filterHyphen.value === '1') parts.push('含杠(-)');
-          else if (filterHyphen.value === '0') parts.push('无杠');
+          const charParts = [];
+          if (filterLetter.value) charParts.push('字母');
+          if (filterDigit.value) charParts.push('数字');
+          if (filterHyphen.value) charParts.push('连字符');
+          if (charParts.length > 0) parts.push(charParts.join('+'));
 
-          if (filterRepeat.value) parts.push(`${filterRepeat.value}连字/豹子`);
+          if (filterRepeat.value) parts.push(`${filterRepeat.value}连字`);
           if (filterSeqCount.value) {
             const dirLabel = filterSeqDir.value === 'asc' ? '正序' : (filterSeqDir.value === 'desc' ? '倒序' : '双向');
             parts.push(`${filterSeqCount.value}顺(${dirLabel})`);
@@ -1381,19 +1364,21 @@
             const patObj = patternOptions.find(p => p.value === filterPattern.value);
             if (patObj) parts.push(patObj.label.split(' ')[1] || patObj.label);
           }
-          if (isPronounceable.value) parts.push('自然发音');
-
-          let code = '';
-          if (filterLength.value && filterCharType.value) {
-            code = ` (${filterLength.value}${filterCharType.value}${filterHyphen.value === '1' ? '-' : ''})`;
-          }
-          return parts.join(' · ') + code;
+          if (isPronounceable.value) parts.push('双拼');
+          if (hasVowel.value) parts.push('元音');
+          if (excludeRare.value) parts.push('避冷门');
+          if (searchKeyword.value) parts.push(`"${searchKeyword.value}"`);
+          if (prefixFilter.value) parts.push(`前缀:${prefixFilter.value}`);
+          if (suffixFilter.value) parts.push(`后缀:${suffixFilter.value}`);
+          return parts.join(' · ');
         });
 
         const resetFilters = () => {
-          filterLength.value = '';
-          filterCharType.value = '';
-          filterHyphen.value = '1';
+          onlyStarred.value = false;
+          filterLengths.value = [];
+          filterLetter.value = false;
+          filterDigit.value = false;
+          filterHyphen.value = false;
           filterRepeat.value = '';
           filterSeqCount.value = '';
           filterSeqDir.value = 'any';
@@ -1411,16 +1396,20 @@
 
         const selectModeFromStats = (m) => {
           if (!m) return;
+          onlyStarred.value = false;
           const match = m.match(/^(\d+)(letter|mix|num)(-?)$/);
           if (match) {
-            filterLength.value = match[1];
-            filterCharType.value = match[2];
-            filterHyphen.value = match[3] === '-' ? '1' : '0';
+            filterLengths.value = [parseInt(match[1])];
+            const type = match[2];
+            filterLetter.value = (type === 'letter' || type === 'mix');
+            filterDigit.value = (type === 'num' || type === 'mix');
+            filterHyphen.value = (match[3] === '-');
             currentMode.value = '';
           } else {
-            filterLength.value = '';
-            filterCharType.value = '';
-            filterHyphen.value = '';
+            filterLengths.value = [];
+            filterLetter.value = false;
+            filterDigit.value = false;
+            filterHyphen.value = false;
             currentMode.value = m;
           }
           page.value = 1;
@@ -1521,10 +1510,7 @@
         const importMode = ref('');
         const importing = ref(false);
 
-        const statusTabs = [
-          { id: 'available', label: '全部', icon: '🎯' },
-          { id: 'starred', label: '我的收藏', icon: '⭐' }
-        ];
+
 
         const modeOptions = [
           { id: 'all', label: '全部模式' },
@@ -1663,11 +1649,13 @@
           loading.value = true;
           try {
             const params = new URLSearchParams({
-              status: currentStatus.value,
+              status: onlyStarred.value ? 'starred' : 'available',
+              starred: onlyStarred.value ? '1' : '0',
               mode: currentMode.value,
-              length: filterLength.value,
-              char_type: filterCharType.value,
-              has_hyphen: filterHyphen.value,
+              lengths: filterLengths.value.join(','),
+              letters: filterLetter.value ? '1' : '0',
+              digits: filterDigit.value ? '1' : '0',
+              hyphen: filterHyphen.value ? '1' : '0',
               repeat_count: filterRepeat.value,
               seq_count: filterSeqCount.value,
               seq_dir: filterSeqDir.value,
@@ -1878,11 +1866,13 @@
 
         const exportCurrent = () => {
           const params = new URLSearchParams({
-            status: currentStatus.value,
+            status: onlyStarred.value ? 'starred' : 'available',
+            starred: onlyStarred.value ? '1' : '0',
             mode: currentMode.value,
-            length: filterLength.value,
-            char_type: filterCharType.value,
-            has_hyphen: filterHyphen.value,
+            lengths: filterLengths.value.join(','),
+            letters: filterLetter.value ? '1' : '0',
+            digits: filterDigit.value ? '1' : '0',
+            hyphen: filterHyphen.value ? '1' : '0',
             repeat_count: filterRepeat.value,
             seq_count: filterSeqCount.value,
             seq_dir: filterSeqDir.value,
@@ -1930,8 +1920,8 @@
           isDark, toggleTheme,
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
-          prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
-          filterLength, filterCharType, filterHyphen, lengthFilterOptions, charTypeFilterOptions,
+          prefixFilter, suffixFilter, hasVowel, excludeRare, modeOptions,
+          onlyStarred, toggleOnlyStarred, filterLengths, filterLetter, filterDigit, filterHyphen,
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,
           filterPattern, patternOptions, isPronounceable,
           hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
