@@ -204,19 +204,18 @@ def load_checkpoint(ckpt_path):
                 print(f"[!] 读取断点文件 {path} 异常: {e}，尝试备用断点...")
     return "", 0, 0, []
 
-def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_domains):
+def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_domains=None):
     tmp_path = ckpt_path + ".tmp"
     bak_path = ckpt_path + ".bak"
     try:
-        # 1. 先安全写入临时文件并强刷磁盘 (防止直接 open("w") 截断原文件造成 0 字节损坏)
+        # 1. 写入精简断点元数据 (仅约 150 字节，彻底消除大 JSON 磁盘 IOPS 瓶颈与 CPU 卡顿)
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump({
                 "last_domain": last_domain,
                 "checked_count": checked_count,
                 "found_count": found_count,
-                "found_domains": found_domains,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
-            }, f, indent=2)
+            }, f)
             f.flush()
             os.fsync(f.fileno())
 

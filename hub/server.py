@@ -853,19 +853,23 @@ class HubHandler(BaseHTTPRequestHandler):
         if path == "/api/stats":
             with get_db() as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'available';")
-                total_available = cur.fetchone()[0]
+                # 单条高效聚合查询各状态计数 (替代 4 次独立全表 count)
+                cur.execute("""
+                    SELECT 
+                        COUNT(CASE WHEN status = 'available' THEN 1 END),
+                        COUNT(CASE WHEN is_starred = 1 THEN 1 END),
+                        COUNT(CASE WHEN status = 'purchased' THEN 1 END),
+                        COUNT(CASE WHEN status = 'registered' THEN 1 END)
+                    FROM domains;
+                """)
+                c_row = cur.fetchone()
+                total_available = c_row[0]
+                total_starred = c_row[1]
+                total_purchased = c_row[2]
+                total_registered = c_row[3]
 
-                cur.execute("SELECT COUNT(*) FROM domains WHERE is_starred = 1;")
-                total_starred = cur.fetchone()[0]
-
-                cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'purchased';")
-                total_purchased = cur.fetchone()[0]
-
-                cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'registered';")
-                total_registered = cur.fetchone()[0]
-
-                cur.execute("SELECT COUNT(*) FROM domains WHERE date(created_at, '+8 hours') = date('now', '+8 hours');")
+                # 精准走 idx_domains_created 索引范围 Seek (消除每 2 秒一次的百万行日期函数全表扫描)
+                cur.execute("SELECT COUNT(*) FROM domains WHERE created_at >= datetime(date('now', '+8 hours'), '-8 hours');")
                 today_found = cur.fetchone()[0]
 
                 cur.execute("SELECT mode, COUNT(*) as cnt FROM domains WHERE status = 'available' GROUP BY mode;")

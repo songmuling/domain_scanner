@@ -105,8 +105,8 @@ class ScanWorker:
                 print(f"[*] 发现历史断点：已核查 {self.checked_count:,} 个，命中可用 {self.found_count} 个，断点记录点: {last_ckpt or '起始'}")
             else:
                 print(f"[*] 未检测到历史断点或断点为空，将从分片起始点开始扫描")
-            # 容灾兜底：历史断点中保存的可用域名同步推入上报队列，保证即便历史重启时 Hub 掉线也能完整补录
-            if found_domains:
+            # 容灾兜底：仅在少量断点残留（如上次进程被 kill 时队列中的未上报项）时补录，避免历史几十万全量重复刷库
+            if found_domains and len(found_domains) <= 500:
                 for item in found_domains:
                     if isinstance(item, (list, tuple)) and len(item) >= 2:
                         d, r = item[0], item[1]
@@ -121,11 +121,15 @@ class ScanWorker:
         self._last_time = start_time
         self._last_count = self.checked_count
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        import concurrent.futures
 
-        batch = []
+        last_dom = last_ckpt
+        last_ckpt_save = time.time()
+        in_flight = set()
+        max_in_flight = self.threads * 2
+
         try:
-            with ThreadPoolExecutor(max_workers=self.threads) as executor:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.threads) as executor:
                 for domain in generator:
                     if self.stop_requested:
                         break
@@ -135,22 +139,23 @@ class ScanWorker:
                             skipping = False
                         continue
 
-                    batch.append(domain)
-                    if len(batch) >= self.threads * 2:
-                        futures = [executor.submit(scanner.check_single_domain, d) for d in batch]
-                        for fut in as_completed(futures):
-                            dom, is_free, reason = fut.result()
+                    fut = executor.submit(scanner.check_single_domain, domain)
+                    in_flight.add(fut)
+
+                    # 流式滑动窗口：当流水线达到容量上限时，等待最先完成的任务释放槽位并立即补入新域名（消除批次空转）
+                    if len(in_flight) >= max_in_flight:
+                        done, in_flight = concurrent.futures.wait(
+                            in_flight, return_when=concurrent.futures.FIRST_COMPLETED
+                        )
+                        for f in done:
+                            dom, is_free, reason = f.result()
                             self.checked_count += 1
                             if is_free:
                                 self.found_count += 1
-                                found_domains.append((dom, reason))
                                 print(f"\n[√ 发现可用] {dom} -> {reason}")
                                 self.hub.report_domain(dom, self.mode, reason)
+                            last_dom = dom
 
-                        last_dom = batch[-1]
-                        scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
-
-                        # 计算即时速度
                         now = time.time()
                         delta_t = now - self._last_time
                         if delta_t >= 2.0:
@@ -158,19 +163,27 @@ class ScanWorker:
                             self._last_time = now
                             self._last_count = self.checked_count
 
-                        batch = []
+                        # 定时存盘超轻量断点 (每 5 秒保存一次，仅 150 字节，零磁盘压力)
+                        if now - last_ckpt_save >= 5.0 and last_dom:
+                            scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count)
+                            last_ckpt_save = now
 
-                if batch and not self.stop_requested:
-                    futures = [executor.submit(scanner.check_single_domain, d) for d in batch]
-                    for fut in as_completed(futures):
-                        dom, is_free, reason = fut.result()
+                # 消费流水线中剩余未结算的任务
+                while in_flight and not self.stop_requested:
+                    done, in_flight = concurrent.futures.wait(
+                        in_flight, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for f in done:
+                        dom, is_free, reason = f.result()
                         self.checked_count += 1
                         if is_free:
                             self.found_count += 1
-                            found_domains.append((dom, reason))
+                            print(f"\n[√ 发现可用] {dom} -> {reason}")
                             self.hub.report_domain(dom, self.mode, reason)
-                    last_dom = batch[-1]
-                    scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count, found_domains)
+                        last_dom = dom
+
+                if last_dom:
+                    scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count)
 
         except Exception as e:
             print(f"扫描异常: {e}")
