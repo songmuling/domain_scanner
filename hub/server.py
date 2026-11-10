@@ -35,11 +35,111 @@ def get_beijing_time_str():
     bj_tz = timezone(timedelta(hours=8))
     return datetime.now(bj_tz).strftime("%Y-%m-%d %H:%M:%S")
 
+def clean_domain_name(s):
+    if not s:
+        return ""
+    return s.split(".")[0].replace("-", "").lower()
+
+def has_consecutive_same(s, n):
+    name = clean_domain_name(s)
+    if not name or not n:
+        return 0
+    try:
+        n = int(n)
+    except Exception:
+        return 0
+    if n < 2 or len(name) < n:
+        return 0
+    pattern = r"([a-z0-9])\1{" + str(n - 1) + ",}"
+    return 1 if re.search(pattern, name) else 0
+
+def has_sequential(s, n, direction="any"):
+    name = clean_domain_name(s)
+    if not name or not n:
+        return 0
+    try:
+        n = int(n)
+    except Exception:
+        return 0
+    if n < 2 or len(name) < n:
+        return 0
+
+    check_asc = direction in ("asc", "any")
+    check_desc = direction in ("desc", "any")
+
+    for i in range(len(name) - n + 1):
+        sub = name[i:i + n]
+        if check_asc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) + 1 == ord(sub[j + 1]) for j in range(n - 1)):
+            return 1
+        if check_desc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) - 1 == ord(sub[j + 1]) for j in range(n - 1)):
+            return 1
+    return 0
+
+def match_pattern(s, pat):
+    name = clean_domain_name(s)
+    if not name or not pat:
+        return 0
+    pat = pat.lower()
+    if pat == "palindrome":
+        return 1 if len(name) >= 3 and name == name[::-1] else 0
+
+    plen = len(pat)
+    if len(name) < plen:
+        return 0
+
+    for i in range(len(name) - plen + 1):
+        window = name[i:i + plen]
+        m_pat2win = {}
+        m_win2pat = {}
+        matched = True
+        for p_ch, w_ch in zip(pat, window):
+            if p_ch in m_pat2win:
+                if m_pat2win[p_ch] != w_ch:
+                    matched = False
+                    break
+            elif w_ch in m_win2pat:
+                matched = False
+                break
+            else:
+                m_pat2win[p_ch] = w_ch
+                m_win2pat[w_ch] = p_ch
+        if matched:
+            return 1
+    return 0
+
+VOWELS_SET = set("aeiou")
+
+def is_pronounceable(s):
+    name = clean_domain_name(s)
+    if not name.isalpha() or len(name) < 3:
+        return 0
+    c_count = 0
+    for ch in name:
+        if ch in VOWELS_SET:
+            c_count = 0
+        else:
+            c_count += 1
+            if c_count >= 3:
+                return 0
+    v_count = 0
+    for ch in name:
+        if ch in VOWELS_SET:
+            v_count += 1
+            if v_count >= 3:
+                return 0
+        else:
+            v_count = 0
+    return 1 if any(ch in VOWELS_SET for ch in name) else 0
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.create_function("has_consecutive_same", 2, has_consecutive_same)
+    conn.create_function("has_sequential", 3, has_sequential)
+    conn.create_function("match_pattern", 2, match_pattern)
+    conn.create_function("is_pronounceable", 1, is_pronounceable)
     return conn
 
 def init_db_and_token():
@@ -347,6 +447,30 @@ def build_domain_filters(params):
         where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[aeiou]*'")
     if exclude_rare:
         where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[qxzvy]*'")
+
+    # 6. 靓号规则：连字 (豹子/叠字 N 连字，例如选 3 匹配 aaa, 888 等)
+    repeat_count = params.get("repeat_count", [""])[0].strip()
+    if repeat_count.isdigit() and int(repeat_count) >= 2:
+        where_clauses.append("has_consecutive_same(domain, ?) = 1")
+        bind_params.append(int(repeat_count))
+
+    # 7. 靓号规则：连号 (顺子 N 连号，支持正序/倒序/双向，例如选 3 匹配 123/abc/cba/321 等)
+    seq_count = params.get("seq_count", [""])[0].strip()
+    seq_dir = params.get("seq_dir", ["any"])[0].strip().lower()
+    if seq_count.isdigit() and int(seq_count) >= 2:
+        where_clauses.append("has_sequential(domain, ?, ?) = 1")
+        bind_params.extend([int(seq_count), seq_dir])
+
+    # 8. 靓号规则：形态结构 (回文 palindrome, AABB, ABAB, ABBA, AAAB, BAAA 等)
+    pattern = params.get("pattern", [""])[0].strip().lower()
+    if pattern:
+        where_clauses.append("match_pattern(domain, ?) = 1")
+        bind_params.append(pattern)
+
+    # 9. 靓号规则：自然发音 (易读元音辅音交替双拼)
+    pronounceable = params.get("pronounceable", ["0"])[0] == "1"
+    if pronounceable:
+        where_clauses.append("is_pronounceable(domain) = 1")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     return where_sql, bind_params

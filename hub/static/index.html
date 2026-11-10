@@ -368,6 +368,51 @@
         </div>
       </div>
 
+      <!-- 💎 靓号雷达与结构特征筛选栏 (连字、顺子、回文、AABB等) -->
+      <div class="flex flex-wrap items-center gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800 text-xs">
+        <div class="flex items-center gap-1.5 text-indigo-400 font-semibold text-[11px] shrink-0">
+          <span>💎</span> <span>靓号雷达:</span>
+        </div>
+
+        <!-- 1. 连字/豹子 -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-slate-400 text-[11px]">连字/豹子:</span>
+          <select v-model="filterRepeat" @change="page = 1; fetchDomains()"
+            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+            <option v-for="opt in repeatOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+
+        <!-- 2. 连号/顺子及方向 -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-slate-400 text-[11px]">连号/顺子:</span>
+          <select v-model="filterSeqCount" @change="page = 1; fetchDomains()"
+            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+            <option v-for="opt in seqCountOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+          <select v-if="filterSeqCount" v-model="filterSeqDir" @change="page = 1; fetchDomains()"
+            class="bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500" title="顺子方向">
+            <option v-for="opt in seqDirOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+
+        <!-- 3. 形态结构 (回文 / AABB / ABAB / ABBA / AAAB / BAAA) -->
+        <div class="flex items-center gap-1.5">
+          <span class="text-slate-400 text-[11px]">形态结构:</span>
+          <select v-model="filterPattern" @change="page = 1; fetchDomains()"
+            class="bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
+            <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+          </select>
+        </div>
+
+        <!-- 4. 自然发音 (易读双拼) -->
+        <button @click="isPronounceable = !isPronounceable; page = 1; fetchDomains()"
+          :class="isPronounceable ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
+          class="px-2.5 py-1 rounded-lg border text-[11px] transition flex items-center gap-1">
+          <span>🗣️ 自然发音 (易读双拼)</span>
+        </button>
+      </div>
+
       <!-- 筛选工具栏 (搜索、前后缀、元音及声母) -->
       <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
         <div class="md:col-span-5 relative">
@@ -985,26 +1030,73 @@
           { value: '', label: '全部' },
           { value: 'letter', label: '纯字母' },
           { value: 'num', label: '纯数字' },
-          { value: 'mix', label: '字母+数字' }
+          { value: 'mix', label: '数字字母混合' }
+        ];
+
+        const filterRepeat = ref('');
+        const filterSeqCount = ref('');
+        const filterSeqDir = ref('any');
+        const filterPattern = ref('');
+        const isPronounceable = ref(false);
+
+        const repeatOptions = [
+          { value: '', label: '不限连字' },
+          { value: '2', label: '2连字 (如 aa, 88)' },
+          { value: '3', label: '3连字/豹子 (如 aaa, 888)' },
+          { value: '4', label: '4连字/炸弹 (如 aaaa, 8888)' }
+        ];
+
+        const seqCountOptions = [
+          { value: '', label: '不限顺子' },
+          { value: '3', label: '3连号/顺子 (如 abc, 123)' },
+          { value: '4', label: '4连号/长顺 (如 abcd, 1234)' },
+          { value: '5', label: '5连号/通天顺 (如 abcde)' }
+        ];
+
+        const seqDirOptions = [
+          { value: 'any', label: '↕ 正反双向' },
+          { value: 'asc', label: '↗ 仅正序' },
+          { value: 'desc', label: '↘ 仅倒序' }
+        ];
+
+        const patternOptions = [
+          { value: '', label: '不限结构' },
+          { value: 'palindrome', label: '🪞 回文 (对称如 aba, abcba)' },
+          { value: 'aabb', label: '👯 AABB (如 aabbc)' },
+          { value: 'abab', label: '🎵 ABAB (如 ababc)' },
+          { value: 'abba', label: '🥪 ABBA (如 abbac)' },
+          { value: 'aaab', label: '👑 AAAB (如 aaabc)' },
+          { value: 'baaa', label: '🌟 BAAA (如 caaa)' }
         ];
 
         const hasActiveFilter = computed(() => {
-          return Boolean(filterLength.value || filterCharType.value || filterHyphen.value !== '1' || (currentMode.value && currentMode.value !== 'all'));
+          return Boolean(filterLength.value || filterCharType.value || filterHyphen.value !== '1' || filterRepeat.value || filterSeqCount.value || filterPattern.value || isPronounceable.value || (currentMode.value && currentMode.value !== 'all'));
         });
 
         const activeFilterSummary = computed(() => {
           if (!hasActiveFilter.value) return '全部组合 (带杠)';
-          if (currentMode.value && currentMode.value !== 'all' && !filterLength.value && !filterCharType.value) {
+          if (currentMode.value && currentMode.value !== 'all' && !filterLength.value && !filterCharType.value && !filterRepeat.value && !filterSeqCount.value && !filterPattern.value && !isPronounceable.value) {
             return currentMode.value;
           }
           const parts = [];
           if (filterLength.value) parts.push(`${filterLength.value}位`);
           if (filterCharType.value === 'letter') parts.push('纯字母');
           else if (filterCharType.value === 'num') parts.push('纯数字');
-          else if (filterCharType.value === 'mix') parts.push('混合');
+          else if (filterCharType.value === 'mix') parts.push('数字字母混合');
 
           if (filterHyphen.value === '1') parts.push('含杠(-)');
           else if (filterHyphen.value === '0') parts.push('无杠');
+
+          if (filterRepeat.value) parts.push(`${filterRepeat.value}连字/豹子`);
+          if (filterSeqCount.value) {
+            const dirLabel = filterSeqDir.value === 'asc' ? '正序' : (filterSeqDir.value === 'desc' ? '倒序' : '双向');
+            parts.push(`${filterSeqCount.value}顺(${dirLabel})`);
+          }
+          if (filterPattern.value) {
+            const patObj = patternOptions.find(p => p.value === filterPattern.value);
+            if (patObj) parts.push(patObj.label.split(' ')[1] || patObj.label);
+          }
+          if (isPronounceable.value) parts.push('自然发音');
 
           let code = '';
           if (filterLength.value && filterCharType.value) {
@@ -1017,6 +1109,11 @@
           filterLength.value = '';
           filterCharType.value = '';
           filterHyphen.value = '1';
+          filterRepeat.value = '';
+          filterSeqCount.value = '';
+          filterSeqDir.value = 'any';
+          filterPattern.value = '';
+          isPronounceable.value = false;
           currentMode.value = '';
           searchKeyword.value = '';
           prefixFilter.value = '';
@@ -1290,6 +1387,11 @@
               length: filterLength.value,
               char_type: filterCharType.value,
               has_hyphen: filterHyphen.value,
+              repeat_count: filterRepeat.value,
+              seq_count: filterSeqCount.value,
+              seq_dir: filterSeqDir.value,
+              pattern: filterPattern.value,
+              pronounceable: isPronounceable.value ? '1' : '0',
               page: page.value,
               limit: limit.value,
               q: searchKeyword.value,
@@ -1495,6 +1597,11 @@
             length: filterLength.value,
             char_type: filterCharType.value,
             has_hyphen: filterHyphen.value,
+            repeat_count: filterRepeat.value,
+            seq_count: filterSeqCount.value,
+            seq_dir: filterSeqDir.value,
+            pattern: filterPattern.value,
+            pronounceable: isPronounceable.value ? '1' : '0',
             q: searchKeyword.value,
             prefix: prefixFilter.value,
             suffix: suffixFilter.value,
