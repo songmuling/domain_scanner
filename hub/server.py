@@ -146,13 +146,14 @@ def get_db():
 def init_db_and_token():
     with DB_LOCK:
         with get_db() as conn:
-            # 1. 域名资产表
+            # 1. 域名资产表 (is_starred 收藏与 status 可用性解耦)
             conn.execute("""
             CREATE TABLE IF NOT EXISTS domains (
                 domain TEXT PRIMARY KEY,
                 mode TEXT,
                 node_id TEXT,
                 status TEXT DEFAULT 'available',
+                is_starred INTEGER DEFAULT 0,
                 reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -223,6 +224,20 @@ def init_db_and_token():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_mode ON domains(mode);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_created ON domains(created_at);")
+
+            # 自动迁移 domains 表增加 is_starred 字段并解耦收藏与可用状态
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(domains);")
+            domain_cols = {row["name"] for row in cur.fetchall()}
+            if "is_starred" not in domain_cols:
+                try:
+                    conn.execute("ALTER TABLE domains ADD COLUMN is_starred INTEGER DEFAULT 0;")
+                except Exception:
+                    pass
+            # 兼容历史状态：历史 status = 'starred' 的记录无缝迁移为 is_starred = 1 且 status = 'available'
+            conn.execute("UPDATE domains SET is_starred = 1, status = 'available' WHERE status = 'starred';")
+            conn.execute("UPDATE domains SET status = 'available' WHERE status IN ('purchased', 'discarded');")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_starred ON domains(is_starred);")
 
             # 自动迁移 nodes 旧表结构
             cur = conn.cursor()
@@ -401,7 +416,9 @@ def build_domain_filters(params):
     where_clauses = []
     bind_params = []
 
-    if status != "all":
+    if status == "starred":
+        where_clauses.append("is_starred = 1")
+    elif status != "all":
         where_clauses.append("status = ?")
         bind_params.append(status)
 
@@ -716,7 +733,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 total_count = cur.fetchone()[0]
 
                 cur.execute(f"""
-                SELECT domain, mode, node_id, status, reason, datetime(created_at, '+8 hours') as created_at
+                SELECT domain, mode, node_id, status, is_starred, reason, datetime(created_at, '+8 hours') as created_at
                 FROM domains
                 {where_sql}
                 ORDER BY domains.created_at DESC
@@ -1146,22 +1163,43 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({"code": 0, "msg": "通信 Token 已更新", "data": {"token": new_tok}})
             return
 
-        # 5. 更改域名状态 (收藏 / 购买 / 垃圾桶)
+        # 5. 更改域名状态与收藏标记 (收藏与可用性解耦)
         if path == "/api/domain/status":
             data = self.read_json_body()
             domain = data.get("domain", "").strip().lower()
-            new_status = data.get("status", "available")
-            if new_status not in ("available", "starred", "purchased", "discarded"):
-                self.send_json({"code": 1, "msg": "Invalid status"}, 400)
+            if not domain:
+                self.send_json({"code": 1, "msg": "Domain is required"}, 400)
                 return
 
             with get_db() as conn:
-                conn.execute("""
-                UPDATE domains SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;
-                """, (new_status, domain))
+                cur = conn.cursor()
+                if "starred" in data:
+                    is_s = 1 if data["starred"] else 0
+                    conn.execute("""
+                    UPDATE domains SET is_starred = ?, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;
+                    """, (is_s, domain))
+                    final_starred = is_s
+                elif data.get("status") == "starred":
+                    conn.execute("""
+                    UPDATE domains SET is_starred = 1, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;
+                    """, (domain,))
+                    final_starred = 1
+                elif data.get("status") == "unstarred":
+                    conn.execute("""
+                    UPDATE domains SET is_starred = 0, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;
+                    """, (domain,))
+                    final_starred = 0
+                else:
+                    new_status = data.get("status", "available")
+                    conn.execute("""
+                    UPDATE domains SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;
+                    """, (new_status, domain))
+                    cur.execute("SELECT is_starred FROM domains WHERE domain = ?;", (domain,))
+                    r = cur.fetchone()
+                    final_starred = r[0] if r else 0
                 conn.commit()
 
-            self.send_json({"code": 0, "msg": f"状态已更新为 {new_status}"})
+            self.send_json({"code": 0, "msg": "更新成功", "is_starred": final_starred})
             return
 
         # 6. 实时权威复检 (Verisign RDAP)

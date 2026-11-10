@@ -106,15 +106,35 @@
       border-color: #e2e8f0 !important;
     }
 
-    /* 文字色彩 */
-    html:not(.dark) .text-white,
-    html:not(.dark) .text-slate-100,
-    html:not(.dark) .text-slate-200 {
+    /* 关键对比度保障：高亮/激活/选中的深色背景按钮，文字必须始终自动为清晰纯白色 */
+    .bg-indigo-600,
+    .bg-indigo-600 *,
+    .bg-indigo-700,
+    .bg-indigo-700 *,
+    .bg-indigo-500,
+    .bg-indigo-500 *,
+    .bg-rose-600,
+    .bg-rose-600 *,
+    .bg-emerald-600,
+    .bg-emerald-600 *,
+    html:not(.dark) .bg-indigo-600,
+    html:not(.dark) .bg-indigo-600 *,
+    html:not(.dark) button.bg-indigo-600,
+    html:not(.dark) button.bg-indigo-600 * {
+      color: #ffffff !important;
+    }
+
+    /* 浅色模式下的常规文字色彩（排除了激活高亮背景） */
+    html:not(.dark) h1,
+    html:not(.dark) h2,
+    html:not(.dark) h3,
+    html:not(.dark) .text-slate-100:not(.bg-indigo-600):not(.bg-indigo-600 *),
+    html:not(.dark) .text-slate-200:not(.bg-indigo-600):not(.bg-indigo-600 *) {
       color: #0f172a !important;
     }
 
-    html:not(.dark) .text-slate-300,
-    html:not(.dark) .text-slate-400 {
+    html:not(.dark) .text-slate-300:not(.bg-indigo-600):not(.bg-indigo-600 *),
+    html:not(.dark) .text-slate-400:not(.bg-indigo-600):not(.bg-indigo-600 *) {
       color: #475569 !important;
     }
 
@@ -122,8 +142,8 @@
       color: #64748b !important;
     }
 
-    html:not(.dark) .text-indigo-300,
-    html:not(.dark) .text-indigo-200 {
+    html:not(.dark) .text-indigo-300:not(.bg-indigo-600):not(.bg-indigo-600 *),
+    html:not(.dark) .text-indigo-200:not(.bg-indigo-600):not(.bg-indigo-600 *) {
       color: #4f46e5 !important;
     }
 
@@ -309,11 +329,11 @@
         </div>
       </div>
 
-      <!-- 顶部操作区 -->
+      <!-- 顶部操作区 (全行统一按钮规格、字体、边框与样式) -->
       <div class="flex items-center flex-wrap gap-2">
         <button @click="openDispatchModal = true"
-          class="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5">
-          🚀 新建扫描任务
+          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+          🚀 新建任务
         </button>
         <button @click="openTokenModal = true"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
@@ -325,17 +345,16 @@
         </button>
         <button @click="exportCurrent"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-          📤 导出
+          📤 导出当前
         </button>
         <button @click="refreshAll" :disabled="loading" title="手动立即刷新同步资产库"
           class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
           <span :class="{'animate-spin inline-block': loading}">🔄</span>
-          <span class="hidden sm:inline">刷新数据</span>
+          <span>刷新数据</span>
         </button>
-        <!-- 🌓 明亮/暗色模式切换 -->
+        <!-- 🌓 明亮/暗色模式切换 (统一规格与字体颜色) -->
         <button @click="toggleTheme"
-          class="px-3 py-1.5 rounded-lg border text-xs font-semibold transition flex items-center gap-1.5 shadow-sm"
-          :class="isDark ? 'bg-slate-800 hover:bg-slate-700 text-amber-300 border-slate-700' : 'bg-white hover:bg-slate-100 text-indigo-600 border-slate-300 shadow-sm'"
+          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5"
           :title="isDark ? '点击切换为浅色明亮模式' : '点击切换为深色沉浸模式'">
           <span>{{ isDark ? '☀️ 浅色' : '🌙 深色' }}</span>
         </button>
@@ -400,9 +419,8 @@
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
         <div class="text-xs font-medium text-slate-400">我的星标收藏</div>
         <div class="text-2xl font-black text-amber-400 mt-1">{{ stats.total_starred || 0 }}</div>
-        <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
-          <span>已购: <b class="text-emerald-400">{{ stats.total_purchased || 0 }}</b></span>
-          <span v-if="stats.total_registered" class="text-rose-400">失效: <b>{{ stats.total_registered }}</b></span>
+        <div class="text-[11px] text-slate-400 mt-1">
+          <span>点击下方“我的收藏”标签快速筛选</span>
         </div>
       </div>
 
@@ -698,9 +716,7 @@
                     {{ item.domain }}
                     <span class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400">📋</span>
                   </span>
-                  <span v-if="item.status === 'starred'" class="text-amber-400 text-xs" title="已收藏">⭐</span>
-                  <span v-if="item.status === 'purchased'"
-                    class="text-emerald-400 text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">已购</span>
+                  <span v-if="item.is_starred" class="text-amber-400 text-xs" title="已收藏">⭐</span>
                   <span v-if="item.status === 'registered'"
                     class="text-rose-400 text-xs font-semibold px-1.5 py-0.5 rounded bg-rose-950/60 border border-rose-800/40" :title="item.reason || '已被抢注'">已失效</span>
                 </div>
@@ -744,19 +760,10 @@
                     class="p-1 text-slate-400 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
                     <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
                   </button>
-                  <button @click="toggleStatus(item, item.status === 'starred' ? 'available' : 'starred')"
-                    :title="item.status === 'starred' ? '取消收藏' : '收藏'"
-                    class="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition">
-                    {{ item.status === 'starred' ? '⭐' : '☆' }}
-                  </button>
-                  <button @click="toggleStatus(item, item.status === 'purchased' ? 'available' : 'purchased')"
-                    title="标记为已购"
-                    class="p-1 text-slate-400 hover:text-emerald-400 rounded hover:bg-slate-800 transition text-xs">
-                    🛒
-                  </button>
-                  <button @click="toggleStatus(item, 'discarded')" title="移至垃圾桶"
-                    class="p-1 text-slate-400 hover:text-red-400 rounded hover:bg-slate-800 transition text-xs">
-                    🗑️
+                  <button @click="toggleStar(item)"
+                    :title="item.is_starred ? '取消收藏' : '加入收藏'"
+                    class="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition text-sm">
+                    {{ item.is_starred ? '⭐' : '☆' }}
                   </button>
                 </div>
               </td>
@@ -1495,12 +1502,8 @@
         const importing = ref(false);
 
         const statusTabs = [
-          { id: 'available', label: '可用池', icon: '🎯' },
-          { id: 'starred', label: '我的收藏', icon: '⭐' },
-          { id: 'purchased', label: '已购买', icon: '🛒' },
-          { id: 'registered', label: '已失效', icon: '🚫' },
-          { id: 'discarded', label: '垃圾桶', icon: '🗑️' },
-          { id: 'all', label: '全部状态', icon: '📁' }
+          { id: 'available', label: '全部', icon: '🎯' },
+          { id: 'starred', label: '我的收藏', icon: '⭐' }
         ];
 
         const modeOptions = [
@@ -1745,20 +1748,25 @@
           } catch (e) { }
         };
 
-        const toggleStatus = async (item, newStatus) => {
+        const toggleStar = async (item) => {
+          const targetStarred = !item.is_starred;
           try {
             const res = await fetch('/api/domain/status', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ domain: item.domain, status: newStatus })
+              body: JSON.stringify({ domain: item.domain, starred: targetStarred })
             });
             const data = await res.json();
             if (data.code === 0) {
-              item.status = newStatus;
+              item.is_starred = targetStarred ? 1 : 0;
+              if (currentStatus.value === 'starred' && !targetStarred) {
+                domainList.value = domainList.value.filter(d => d.domain !== item.domain);
+                totalDomains.value = Math.max(0, totalDomains.value - 1);
+              }
               fetchStats();
             }
           } catch (e) {
-            showToast('更新失败');
+            showToast('更新收藏失败');
           }
         };
 
@@ -1916,7 +1924,7 @@
           openTokenModal, openImportModal, importText, importMode, importing,
           openBatchRecheckModal, batchRecheckScope, batchRecheckState,
           startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
-          copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
+          copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           submitImport, exportCurrent, refreshAll
         };
       }
