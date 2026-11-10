@@ -218,7 +218,16 @@ def check_rdap_availability(domain):
 
     return False
 
+# ICANN / IETF / IGO 官方政策永久保留字 (虽然 RDAP 返回 404，但 ICANN 禁止向公众开放注册)
+ICANN_RESERVED_PREFIXES = {
+    "gnso", "iesg", "imso", "example", "nic", "whois", "w3c", "iana", "icann", "internic", "rfc-editor"
+}
+
 def check_single_domain(domain):
+    prefix = domain.split(".")[0].lower()
+    if prefix in ICANN_RESERVED_PREFIXES:
+        return domain, False, "ICANN 官方政策保留字 (非卖品，禁止注册)"
+
     # 1. DNS 先行初筛
     if dns_has_record(domain):
         return domain, False, "DNS解析已存在"
