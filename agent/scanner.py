@@ -131,8 +131,9 @@ def get_sharded_generator(length, use_letters, use_digits, use_hyphen, suffix, s
 
 def dns_has_record(domain):
     """步骤 1: DNS 初筛 (毫秒级过滤 85%~90% 已解析占用域名)"""
+    lookup_name = domain if domain.endswith(".") else f"{domain}."
     try:
-        socket.getaddrinfo(domain, 80, socket.AF_INET, socket.SOCK_STREAM)
+        socket.getaddrinfo(lookup_name, 80, socket.AF_INET, socket.SOCK_STREAM)
         return True
     except socket.gaierror:
         return False
