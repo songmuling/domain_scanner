@@ -493,6 +493,13 @@ def init_db_and_token():
                     except Exception:
                         pass
 
+            # 自动校准被尾部窃取分片的 total (确保与 end_idx - start_idx 严格一致，防止被心跳冲刷覆盖)
+            conn.execute("""
+            UPDATE task_assignments
+            SET total = (end_idx - start_idx)
+            WHERE start_idx IS NOT NULL AND end_idx IS NOT NULL AND total != (end_idx - start_idx);
+            """)
+
             # 确保 Master Token 存在
             env_token = os.environ.get("HUB_TOKEN", "").strip()
             cur = conn.cursor()
@@ -1358,7 +1365,11 @@ class HubHandler(BaseHTTPRequestHandler):
                         mode = excluded.mode,
                         shard = excluded.shard,
                         scanned = excluded.scanned,
-                        total = excluded.total,
+                        total = CASE 
+                            WHEN (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id) IS NOT NULL 
+                            THEN (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id)
+                            ELSE excluded.total 
+                        END,
                         speed = excluded.speed,
                         available_count = excluded.available_count,
                         agent_version = CASE WHEN excluded.agent_version IS NOT NULL AND excluded.agent_version != '' THEN excluded.agent_version ELSE nodes.agent_version END,
@@ -1374,9 +1385,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         conn.execute("""
                         UPDATE task_assignments SET
-                            scanned = ?, total = ?, speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                            scanned = ?, speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE task_id = ? AND node_id = ?;
-                        """, (scanned, total, speed, avail_cnt, effective_assign_status, task_id, node_id))
+                        """, (scanned, speed, avail_cnt, effective_assign_status, task_id, node_id))
 
                         if effective_assign_status == "completed":
                             conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND is_aid = 1;", (task_id,))
