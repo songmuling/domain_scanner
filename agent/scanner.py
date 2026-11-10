@@ -16,6 +16,21 @@ import socket
 import urllib.request
 import urllib.error
 
+# 强制底层网络优先使用 IPv4，彻底规避双栈宽带环境下跨洋 IPv6 握手黑洞与 PMTUD 丢包
+_orig_getaddrinfo = socket.getaddrinfo
+
+def _ipv4_preferred_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    if family == 0 or family == getattr(socket, "AF_UNSPEC", 0):
+        try:
+            res = _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+            if res:
+                return res
+        except Exception:
+            pass
+    return _orig_getaddrinfo(host, port, family, type, proto, flags)
+
+socket.getaddrinfo = _ipv4_preferred_getaddrinfo
+
 # 全局忽略部分特殊网络环境下的 SSL 证书校验错误
 ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
@@ -138,7 +153,7 @@ def check_rdap_availability(domain):
     retries = 3
     for attempt in range(retries):
         try:
-            with urllib.request.urlopen(req, timeout=5, context=ssl_context) as resp:
+            with urllib.request.urlopen(req, timeout=3.5, context=ssl_context) as resp:
                 if resp.status == 200:
                     return False
         except urllib.error.HTTPError as e:
@@ -150,7 +165,7 @@ def check_rdap_availability(domain):
             else:
                 return False
         except Exception:
-            time.sleep(1)
+            time.sleep(0.5)
             continue
 
     return False
