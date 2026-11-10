@@ -597,7 +597,7 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 全局活跃任务列表 (支持异构多任务并发)
                 cur.execute("""
-                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, t.created_at,
+                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, datetime(t.created_at, '+8 hours') as created_at,
                        COUNT(a.id) as total_shards,
                        SUM(CASE WHEN a.status = 'running' THEN 1 ELSE 0 END) as running_shards,
                        SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
@@ -681,8 +681,8 @@ class HubHandler(BaseHTTPRequestHandler):
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute("""
-                SELECT task_id, mode, suffix, threads, target_nodes, status, created_at, updated_at
-                FROM tasks ORDER BY created_at DESC LIMIT 20;
+                SELECT task_id, mode, suffix, threads, target_nodes, status, datetime(created_at, '+8 hours') as created_at, datetime(updated_at, '+8 hours') as updated_at
+                FROM tasks ORDER BY tasks.created_at DESC LIMIT 20;
                 """)
                 tasks = []
                 for row in cur.fetchall():
@@ -716,10 +716,10 @@ class HubHandler(BaseHTTPRequestHandler):
                 total_count = cur.fetchone()[0]
 
                 cur.execute(f"""
-                SELECT domain, mode, node_id, status, reason, created_at
+                SELECT domain, mode, node_id, status, reason, datetime(created_at, '+8 hours') as created_at
                 FROM domains
                 {where_sql}
-                ORDER BY created_at DESC
+                ORDER BY domains.created_at DESC
                 LIMIT ? OFFSET ?;
                 """, bind_params + [limit, offset])
 
