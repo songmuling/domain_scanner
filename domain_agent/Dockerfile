@@ -7,3 +7,4 @@ COPY domain_scanner.py /app/
 COPY agent.py /app/
 
 CMD ["python", "agent.py"]
+

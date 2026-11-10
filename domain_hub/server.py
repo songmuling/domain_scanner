@@ -251,21 +251,32 @@ class HubHandler(BaseHTTPRequestHandler):
         path = parsed.path
         params = urllib.parse.parse_qs(parsed.query)
 
-        # 1. 静态主页
+        # 1. 静态主页与资源文件服务 (全面支持本地化 js/css)
+        clean_path = path.lstrip("/")
+        if clean_path.startswith("static/"):
+            clean_path = clean_path[len("static/"):]
+
         if path in ("", "/", "/index.html"):
-            index_file = os.path.join(STATIC_DIR, "index.html")
-            if os.path.exists(index_file):
-                with open(index_file, "rb") as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header("Content-Type", "text/html; charset=utf-8")
-                self.send_header("Content-Length", str(len(content)))
-                self.end_headers()
-                self.wfile.write(content)
-                return
-            else:
-                self.send_error(404, "Static index.html not found")
-                return
+            clean_path = "index.html"
+
+        static_file = os.path.join(STATIC_DIR, clean_path)
+        if os.path.isfile(static_file):
+            content_type = "application/octet-stream"
+            if static_file.endswith(".html"): content_type = "text/html; charset=utf-8"
+            elif static_file.endswith(".js"): content_type = "application/javascript; charset=utf-8"
+            elif static_file.endswith(".css"): content_type = "text/css; charset=utf-8"
+            elif static_file.endswith(".json"): content_type = "application/json; charset=utf-8"
+            elif static_file.endswith(".svg"): content_type = "image/svg+xml"
+
+            with open(static_file, "rb") as f:
+                content = f.read()
+            self.send_response(200)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Cache-Control", "public, max-age=86400")
+            self.end_headers()
+            self.wfile.write(content)
+            return
 
         # 2. 统计概览 API
         if path == "/api/stats":
