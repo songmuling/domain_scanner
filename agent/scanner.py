@@ -172,23 +172,28 @@ def check_single_domain(domain):
 # ----------------- 进度断点存盘 -----------------
 
 def load_checkpoint(ckpt_path):
-    if os.path.exists(ckpt_path):
-        try:
-            with open(ckpt_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return (
-                    data.get("last_domain", ""),
-                    data.get("checked_count", 0),
-                    data.get("found_count", 0),
-                    data.get("found_domains", [])
-                )
-        except Exception:
-            pass
+    # 优先加载主断点文件，如果主断点异常，自动回退到 .bak 备份断点
+    for path in [ckpt_path, ckpt_path + ".bak"]:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    ld = data.get("last_domain", "")
+                    cc = data.get("checked_count", 0)
+                    fc = data.get("found_count", 0)
+                    fd = data.get("found_domains", [])
+                    if cc > 0 or ld:
+                        return ld, cc, fc, fd
+            except Exception as e:
+                print(f"[!] 读取断点文件 {path} 异常: {e}，尝试备用断点...")
     return "", 0, 0, []
 
 def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_domains):
+    tmp_path = ckpt_path + ".tmp"
+    bak_path = ckpt_path + ".bak"
     try:
-        with open(ckpt_path, "w", encoding="utf-8") as f:
+        # 1. 先安全写入临时文件并强刷磁盘 (防止直接 open("w") 截断原文件造成 0 字节损坏)
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump({
                 "last_domain": last_domain,
                 "checked_count": checked_count,
@@ -196,6 +201,19 @@ def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_do
                 "found_domains": found_domains,
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
             }, f, indent=2)
-    except Exception:
+            f.flush()
+            os.fsync(f.fileno())
+
+        # 2. 如果原断点有效存在，备份一份为 .bak 双重保险
+        if os.path.exists(ckpt_path):
+            try:
+                import shutil
+                shutil.copyfile(ckpt_path, bak_path)
+            except Exception:
+                pass
+
+        # 3. 操作系统级原子重命名替换 (Linux POSIX rename 保证瞬时原子性，杜绝任何断电/重启损坏)
+        os.replace(tmp_path, ckpt_path)
+    except Exception as e:
         pass
 

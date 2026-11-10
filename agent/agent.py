@@ -103,6 +103,8 @@ class ScanWorker:
             last_ckpt, self.checked_count, self.found_count, found_domains = scanner.load_checkpoint(ckpt_file)
             if self.checked_count > 0:
                 print(f"[*] 发现历史断点：已核查 {self.checked_count:,} 个，命中可用 {self.found_count} 个，断点记录点: {last_ckpt or '起始'}")
+            else:
+                print(f"[*] 未检测到历史断点或断点为空，将从分片起始点开始扫描")
             # 容灾兜底：历史断点中保存的可用域名同步推入上报队列，保证即便历史重启时 Hub 掉线也能完整补录
             if found_domains:
                 for item in found_domains:
