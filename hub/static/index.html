@@ -94,7 +94,8 @@
       background-color: #f1f5f9 !important;
     }
 
-    /* 边框线条 */
+    /* 边框线条 (浅色模式统一为雅致淡灰边框，彻底杜绝深黑粗边框) */
+    html:not(.dark) [class*="border-slate-"],
     html:not(.dark) .border-slate-800,
     html:not(.dark) .border-slate-800\/80,
     html:not(.dark) .border-slate-800\/60,
@@ -102,8 +103,10 @@
     html:not(.dark) .border-slate-800\/40,
     html:not(.dark) .border-slate-800\/30,
     html:not(.dark) .border-slate-700,
-    html:not(.dark) .border-slate-700\/60 {
-      border-color: #e2e8f0 !important;
+    html:not(.dark) .border-slate-700\/80,
+    html:not(.dark) .border-slate-700\/60,
+    html:not(.dark) .border-slate-700\/50 {
+      border-color: #cbd5e1 !important;
     }
 
     /* 浅色模式下的常规文字色彩 (文字转深色高对比度) */
@@ -600,13 +603,13 @@
 
           <!-- ⭐ 只看我的收藏 (点击只看收藏，再点取消) -->
           <button @click="toggleOnlyStarred"
-            :class="onlyStarred ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 font-semibold shadow-sm' : 'bg-slate-900 text-slate-400 border-slate-700/80 hover:text-slate-200'"
+            :class="onlyStarred ? 'bg-amber-500/15 text-amber-500 border-amber-400 font-semibold shadow-sm' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'"
             class="px-2.5 py-1.5 rounded-lg border text-xs transition flex items-center gap-1.5 shrink-0"
             :title="onlyStarred ? '当前正处于【只看收藏】，点击恢复查看全部' : '点击只看我的收藏'">
             <span>⭐</span>
             <span>只看收藏</span>
             <span v-if="stats.total_starred > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono"
-              :class="onlyStarred ? 'bg-amber-400/20 text-amber-300' : 'bg-slate-800 text-slate-400'">
+              :class="onlyStarred ? 'bg-amber-400/20 text-amber-500' : 'bg-slate-900/60 text-slate-400'">
               {{ stats.total_starred }}
             </span>
           </button>
