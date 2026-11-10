@@ -1,16 +1,16 @@
 services:
   domain-agent:
-    build: .
-    image: domain-agent:latest
+    image: python:3.12-alpine
     container_name: domain-agent
     restart: unless-stopped
     network_mode: host
+    working_dir: /app
     volumes:
       - ./:/app
+    command: python agent.py
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
       - HUB_URL=${HUB_URL:-http://your-hub-ip:8088}
       - HUB_TOKEN=${HUB_TOKEN:-}
       - NODE_ID=${NODE_ID:-My-Node-Name}
-

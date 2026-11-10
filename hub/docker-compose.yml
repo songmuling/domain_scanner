@@ -1,14 +1,16 @@
 services:
   domain-hub:
-    build: .
-    image: domain-hub:latest
+    image: python:3.12-alpine
     container_name: domain-hub
     restart: unless-stopped
     ports:
       - "8088:8088"
+    working_dir: /app
     volumes:
       - ./data:/app/data
       - ./server.py:/app/server.py
       - ./static:/app/static
+    command: python server.py 8088
     environment:
       - TZ=Asia/Shanghai
+      - PYTHONUNBUFFERED=1

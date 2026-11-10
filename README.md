@@ -157,11 +157,20 @@ docker compose up -d
 
 #### 🅱️ 部署 Agent 扫描节点 (如 US / KR / 软路由)
 点击 Web 界面右上角 **【🤖 接入 Agent】**，一键获取包含集群鉴权 Token 的部署命令：
-- **Docker Run**:
+- **Docker Compose (推荐，直接使用官方轻量镜像，免 build)**:
+  ```bash
+  cd agent
+  cp .env.sample .env
+  # 填入 HUB_URL, HUB_TOKEN, NODE_ID
+  docker compose up -d
+  ```
+- **Docker Run (免 build，直接拉取官方镜像)**:
   ```bash
   docker run -d --restart unless-stopped --name domain-agent --network host \
+    -v $(pwd):/app -w /app \
+    -e PYTHONUNBUFFERED=1 \
     -e HUB_URL="http://<HUB_IP>:8088" -e HUB_TOKEN="<CLUSTER_TOKEN>" -e NODE_ID="Google-US" \
-    domain-agent:latest
+    python:3.12-alpine python agent.py
   ```
 - **软路由 / Python 脚本直接运行** (纯 Python 3 标准库，零 pip 依赖):
   ```bash

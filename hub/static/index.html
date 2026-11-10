@@ -761,12 +761,12 @@
               <div>docker run -d --restart unless-stopped \</div>
               <div class="pl-4">--name domain-agent \</div>
               <div class="pl-4">--network host \</div>
-              <div class="pl-4">-v $(pwd):/app \</div>
+              <div class="pl-4">-v $(pwd):/app -w /app \</div>
               <div class="pl-4">-e PYTHONUNBUFFERED=1 \</div>
               <div class="pl-4">-e HUB_URL="http://192.168.200.12:8088" \</div>
               <div class="pl-4">-e HUB_TOKEN="{{ clusterToken }}" \</div>
               <div class="pl-4">-e NODE_ID="My-Node-Name" \</div>
-              <div class="pl-4">domain-agent:latest</div>
+              <div class="pl-4">python:3.12-alpine python agent.py</div>
               <button @click="copyDockerRunCmd"
                 class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
                 一键复制
@@ -779,12 +779,14 @@
                 <div>version: '3.8'</div>
                 <div>services:</div>
                 <div class="pl-2">domain-agent:</div>
-                <div class="pl-4">image: domain-agent:latest</div>
+                <div class="pl-4">image: python:3.12-alpine</div>
                 <div class="pl-4">container_name: domain-agent</div>
                 <div class="pl-4">restart: unless-stopped</div>
                 <div class="pl-4">network_mode: host</div>
+                <div class="pl-4">working_dir: /app</div>
                 <div class="pl-4">volumes:</div>
                 <div class="pl-6">- ./:/app</div>
+                <div class="pl-4">command: python agent.py</div>
                 <div class="pl-4">environment:</div>
                 <div class="pl-6">- TZ=Asia/Shanghai</div>
                 <div class="pl-6">- PYTHONUNBUFFERED=1</div>
@@ -1148,11 +1150,11 @@
         };
 
         const copyDockerRunCmd = () => {
-          copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -v $(pwd):/app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" domain-agent:latest`);
+          copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -v $(pwd):/app -w /app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" python:3.12-alpine python agent.py`);
         };
 
         const copyComposeYaml = () => {
-          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: domain-agent:latest\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    volumes:\n      - ./:/app\n    environment:\n      - TZ=Asia/Shanghai\n      - PYTHONUNBUFFERED=1\n      - HUB_URL=\${HUB_URL:-http://192.168.200.12:8088}\n      - HUB_TOKEN=\${HUB_TOKEN:-${clusterToken.value}}\n      - NODE_ID=\${NODE_ID:-My-Node-Name}\n`);
+          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: python:3.12-alpine\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    working_dir: /app\n    volumes:\n      - ./:/app\n    command: python agent.py\n    environment:\n      - TZ=Asia/Shanghai\n      - PYTHONUNBUFFERED=1\n      - HUB_URL=\${HUB_URL:-http://192.168.200.12:8088}\n      - HUB_TOKEN=\${HUB_TOKEN:-${clusterToken.value}}\n      - NODE_ID=\${NODE_ID:-My-Node-Name}\n`);
         };
 
         const copyPythonCmd = () => {
