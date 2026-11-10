@@ -142,10 +142,10 @@
     .bg-red-600\/80 *,
     .bg-emerald-600,
     .bg-emerald-600 *,
-    .bg-gradient-to-r,
-    .bg-gradient-to-r *,
-    .bg-gradient-to-tr,
-    .bg-gradient-to-tr *,
+    button.bg-gradient-to-r,
+    button.bg-gradient-to-r *,
+    button.bg-gradient-to-tr,
+    button.bg-gradient-to-tr *,
     html:not(.dark) .bg-indigo-600,
     html:not(.dark) .bg-indigo-600 *,
     html:not(.dark) .bg-indigo-700,
@@ -158,13 +158,48 @@
     html:not(.dark) .bg-red-600\/80 *,
     html:not(.dark) .bg-emerald-600,
     html:not(.dark) .bg-emerald-600 *,
-    html:not(.dark) .bg-gradient-to-r,
-    html:not(.dark) .bg-gradient-to-r *,
-    html:not(.dark) .bg-gradient-to-tr,
-    html:not(.dark) .bg-gradient-to-tr *,
+    html:not(.dark) button.bg-gradient-to-r,
+    html:not(.dark) button.bg-gradient-to-r *,
+    html:not(.dark) button.bg-gradient-to-tr,
+    html:not(.dark) button.bg-gradient-to-tr *,
     html:not(.dark) button.bg-indigo-600,
     html:not(.dark) button.bg-indigo-600 * {
       color: #ffffff !important;
+    }
+
+    /* 浅色模式下的活跃扫描任务横幅 (彻底杜绝文字泛白，确保极佳对比度) */
+    html:not(.dark) .active-task-banner {
+      background: linear-gradient(to right, #eff6ff, #f8fafc) !important;
+      border-color: #c7d2fe !important;
+      box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.05);
+    }
+    html:not(.dark) .active-task-banner .task-label {
+      color: #4338ca !important;
+    }
+    html:not(.dark) .active-task-banner .task-badge {
+      background-color: #e0e7ff !important;
+      border-color: #a5b4fc !important;
+      color: #3730a3 !important;
+    }
+    html:not(.dark) .active-task-banner .task-nodes {
+      background-color: #ffffff !important;
+      border-color: #cbd5e1 !important;
+      color: #334155 !important;
+    }
+    html:not(.dark) .active-task-banner .task-id {
+      color: #64748b !important;
+    }
+    html:not(.dark) .active-task-banner .task-detail {
+      color: #475569 !important;
+    }
+    html:not(.dark) .active-task-banner .task-progress-num {
+      color: #0f172a !important;
+    }
+    html:not(.dark) .active-task-banner .task-speed {
+      color: #059669 !important;
+    }
+    html:not(.dark) .active-task-banner .task-found {
+      color: #4338ca !important;
     }
 
     html:not(.dark) .text-emerald-400 {
@@ -385,25 +420,25 @@
     <!-- 当前活跃任务横幅 (支持多任务异构并行调度) -->
     <div v-if="activeTaskList && activeTaskList.length > 0" class="space-y-3">
       <div v-for="t in activeTaskList" :key="t.task_id"
-        class="bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-800/60 p-3.5 sm:p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+        class="active-task-banner bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-800/60 p-3.5 sm:p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
         <div class="flex items-center gap-3">
           <span class="text-2xl animate-spin inline-block">⚙️</span>
           <div>
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs font-semibold text-indigo-300 uppercase">活跃扫描任务:</span>
+              <span class="text-xs font-semibold text-indigo-300 uppercase task-label">活跃扫描任务:</span>
               <span
-                class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono">
+                class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono task-badge">
                 {{ t.mode }} ({{ t.suffix || 'com' }})
               </span>
-              <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono">
+              <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono task-nodes">
                 {{ t.running_shards || 0 }}/{{ t.total_shards || 0 }} 节点运行中
               </span>
-              <span class="text-[11px] text-slate-500 font-mono hidden md:inline">ID: {{ t.task_id }}</span>
+              <span class="text-[11px] text-slate-500 font-mono hidden md:inline task-id">ID: {{ t.task_id }}</span>
             </div>
-            <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-3 sm:gap-4 flex-wrap">
-              <span>进度: <b class="text-white font-mono">{{ (t.scanned || 0).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ t.progress_pct || 0 }}%)</span>
-              <span>综合速率: <b class="text-emerald-400 font-mono">{{ t.speed || 0 }} 个/秒</b></span>
-              <span>发现可用: <b class="text-indigo-300 font-mono">{{ t.available_count || 0 }} 个</b></span>
+            <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-3 sm:gap-4 flex-wrap task-detail">
+              <span>进度: <b class="text-white font-mono task-progress-num">{{ (t.scanned || 0).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ t.progress_pct || 0 }}%)</span>
+              <span>综合速率: <b class="text-emerald-400 font-mono task-speed">{{ t.speed || 0 }} 个/秒</b></span>
+              <span>发现可用: <b class="text-indigo-300 font-mono task-found">{{ t.available_count || 0 }} 个</b></span>
             </div>
           </div>
         </div>

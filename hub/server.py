@@ -625,7 +625,7 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'available';")
                 total_available = cur.fetchone()[0]
 
-                cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'starred';")
+                cur.execute("SELECT COUNT(*) FROM domains WHERE is_starred = 1;")
                 total_starred = cur.fetchone()[0]
 
                 cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'purchased';")
