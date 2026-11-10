@@ -397,6 +397,7 @@ def init_db_and_token():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status_created ON domains(status, created_at DESC);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_starred_created ON domains(is_starred, created_at DESC);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_mode_status_created ON domains(mode, status, created_at DESC);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status_mode ON domains(status, mode);")
 
             # 自动迁移 domains 表增加 is_starred 与特征预计算字段
             cur = conn.cursor()
@@ -656,16 +657,62 @@ def start_wal_checkpoint_worker():
     t = threading.Thread(target=_checkpoint_loop, daemon=True)
     t.start()
 
-# 大屏与资产统计短期内存缓存 (TTL 3 秒，杜绝高频轮询导致百万级全表扫描)
-_DOMAIN_STATS_CACHE = {
-    "expires_at": 0.0,
-    "data": None
+# 大屏与资产统计实时内存镜像缓存 (由后台轻量守护线程预计算，API 0 毫秒内存直出)
+_STATS_LOCK = threading.Lock()
+_CACHED_DOMAIN_STATS = {
+    "total_available": 0,
+    "total_starred": 0,
+    "total_purchased": 0,
+    "total_registered": 0,
+    "today_found": 0,
+    "mode_stats": {}
 }
+
+def start_stats_aggregator_worker():
+    """后台轻量定时预计算全表大盘统计（每 4 秒刷新一次），彻底终结 HTTP 请求中的百万行锁竞争与等待"""
+    def _loop():
+        # 启动后微延时 0.5s 立即预热第一轮
+        time.sleep(0.5)
+        while True:
+            try:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute("""
+                        SELECT 
+                            COUNT(CASE WHEN status = 'available' THEN 1 END),
+                            COUNT(CASE WHEN is_starred = 1 THEN 1 END),
+                            COUNT(CASE WHEN status = 'purchased' THEN 1 END),
+                            COUNT(CASE WHEN status = 'registered' THEN 1 END)
+                        FROM domains;
+                    """)
+                    c_row = cur.fetchone()
+
+                    cur.execute("SELECT COUNT(*) FROM domains WHERE created_at >= datetime(date('now', '+8 hours'), '-8 hours');")
+                    t_found = cur.fetchone()[0]
+
+                    # 走 idx_domains_status_mode 覆盖索引快速分组
+                    cur.execute("SELECT mode, COUNT(*) as cnt FROM domains WHERE status = 'available' GROUP BY mode;")
+                    m_stats = {row["mode"] or "unknown": row["cnt"] for row in cur.fetchall()}
+
+                    with _STATS_LOCK:
+                        _CACHED_DOMAIN_STATS["total_available"] = c_row[0]
+                        _CACHED_DOMAIN_STATS["total_starred"] = c_row[1]
+                        _CACHED_DOMAIN_STATS["total_purchased"] = c_row[2]
+                        _CACHED_DOMAIN_STATS["total_registered"] = c_row[3]
+                        _CACHED_DOMAIN_STATS["today_found"] = t_found
+                        _CACHED_DOMAIN_STATS["mode_stats"] = m_stats
+            except Exception:
+                pass
+            time.sleep(4.0)
+
+    t = threading.Thread(target=_loop, daemon=True)
+    t.start()
 
 MASTER_TOKEN = init_db_and_token()
 print(f"[{get_beijing_time_str()}] Domain Hub 核心数据库已就绪，当前集群通信 Token: {MASTER_TOKEN}")
 start_feature_backfill_worker()
 start_wal_checkpoint_worker()
+start_stats_aggregator_worker()
 
 def get_current_token():
     env_token = os.environ.get("HUB_TOKEN", "").strip()
@@ -1060,57 +1107,24 @@ class HubHandler(BaseHTTPRequestHandler):
 
         # 2. 统计概览 API
         if path == "/api/stats":
-            now = time.time()
+            with _STATS_LOCK:
+                cached = dict(_CACHED_DOMAIN_STATS)
+            total_available = cached["total_available"]
+            total_starred = cached["total_starred"]
+            total_purchased = cached["total_purchased"]
+            total_registered = cached["total_registered"]
+            today_found = cached["today_found"]
+            mode_stats = cached["mode_stats"]
+
             with get_db() as conn:
                 cur = conn.cursor()
-                if now >= _DOMAIN_STATS_CACHE["expires_at"] or not _DOMAIN_STATS_CACHE["data"]:
-                    # 单条高效聚合查询各状态计数 (替代 4 次独立全表 count)
-                    cur.execute("""
-                        SELECT 
-                            COUNT(CASE WHEN status = 'available' THEN 1 END),
-                            COUNT(CASE WHEN is_starred = 1 THEN 1 END),
-                            COUNT(CASE WHEN status = 'purchased' THEN 1 END),
-                            COUNT(CASE WHEN status = 'registered' THEN 1 END)
-                        FROM domains;
-                    """)
-                    c_row = cur.fetchone()
-                    total_available = c_row[0]
-                    total_starred = c_row[1]
-                    total_purchased = c_row[2]
-                    total_registered = c_row[3]
-
-                    # 精准走 idx_domains_created 索引范围 Seek (消除每 2 秒一次的百万行日期函数全表扫描)
-                    cur.execute("SELECT COUNT(*) FROM domains WHERE created_at >= datetime(date('now', '+8 hours'), '-8 hours');")
-                    today_found = cur.fetchone()[0]
-
-                    cur.execute("SELECT mode, COUNT(*) as cnt FROM domains WHERE status = 'available' GROUP BY mode;")
-                    mode_stats = {row["mode"] or "unknown": row["cnt"] for row in cur.fetchall()}
-
-                    _DOMAIN_STATS_CACHE["data"] = {
-                        "total_available": total_available,
-                        "total_starred": total_starred,
-                        "total_purchased": total_purchased,
-                        "total_registered": total_registered,
-                        "today_found": today_found,
-                        "mode_stats": mode_stats
-                    }
-                    _DOMAIN_STATS_CACHE["expires_at"] = now + 3.0
-                else:
-                    cached = _DOMAIN_STATS_CACHE["data"]
-                    total_available = cached["total_available"]
-                    total_starred = cached["total_starred"]
-                    total_purchased = cached["total_purchased"]
-                    total_registered = cached["total_registered"]
-                    today_found = cached["today_found"]
-                    mode_stats = cached["mode_stats"]
-
-                # 30秒内有心跳视为在线
+                # 30秒内有心跳视为在线 (轻量 nodes 表)
                 cur.execute("SELECT COUNT(*), COALESCE(SUM(speed), 0) FROM nodes WHERE (strftime('%s', 'now') - strftime('%s', last_seen)) <= 30 AND status = 'running';")
                 active_row = cur.fetchone()
                 active_nodes = active_row[0]
                 total_speed = round(active_row[1], 1)
 
-                # 全局活跃任务列表 (支持异构多任务并发，且透明聚合并行援助子任务)
+                # 全局活跃任务列表 (轻量 tasks 表)
                 cur.execute("""
                 SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, datetime(t.created_at, '+8 hours') as created_at,
                        COUNT(DISTINCT a.id) as total_shards,
@@ -1145,9 +1159,9 @@ class HubHandler(BaseHTTPRequestHandler):
                     "total_purchased": total_purchased,
                     "total_registered": total_registered,
                     "today_found": today_found,
+                    "mode_stats": mode_stats,
                     "active_nodes": active_nodes,
                     "total_speed": total_speed,
-                    "mode_stats": mode_stats,
                     "active_task": active_task,
                     "active_tasks": active_tasks
                 }
@@ -1228,14 +1242,15 @@ class HubHandler(BaseHTTPRequestHandler):
             limit = min(200, max(10, int(params.get("limit", ["50"])[0])))
             offset = (page - 1) * limit
 
-            cached_data = _DOMAIN_STATS_CACHE.get("data")
+            with _STATS_LOCK:
+                cached_data = dict(_CACHED_DOMAIN_STATS)
             with get_db() as conn:
                 cur = conn.cursor()
                 # 极速快显优化：当没有自定义复杂过滤、仅浏览"全部可用"或"收藏星标"时，直接命中统计缓存，杜绝 350 万行全表扫描 COUNT
-                if (not where_sql or where_sql == "WHERE status = ?") and bind_params == ["available"] and cached_data:
-                    total_count = cached_data["total_available"]
-                elif where_sql == "WHERE is_starred = 1" and not bind_params and cached_data:
-                    total_count = cached_data["total_starred"]
+                if (not where_sql or where_sql == "WHERE status = ?") and bind_params == ["available"]:
+                    total_count = cached_data.get("total_available", 0)
+                elif where_sql == "WHERE is_starred = 1" and not bind_params:
+                    total_count = cached_data.get("total_starred", 0)
                 else:
                     cur.execute(f"SELECT COUNT(*) FROM domains {where_sql};", bind_params)
                     total_count = cur.fetchone()[0]
