@@ -14,3 +14,4 @@ services:
       - HUB_URL=${HUB_URL:-http://your-hub-ip:8088}
       - HUB_TOKEN=${HUB_TOKEN:-}
       - NODE_ID=${NODE_ID:-My-Node-Name}
+      - MAX_THREADS=${MAX_THREADS:-}

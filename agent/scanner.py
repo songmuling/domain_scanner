@@ -208,7 +208,7 @@ def parse_mode_string(mode_str):
         s = s[:-1]
 
     length = 4
-    for l in (3, 4, 5):
+    for l in (3, 4, 5, 6):
         if s.startswith(str(l)):
             length = l
             s = s[1:]

@@ -544,7 +544,7 @@
           <!-- 节点 IP 与系统 -->
           <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between font-mono">
             <span>IP: {{ node.ip || '内网' }}</span>
-            <span>v{{ node.agent_version || '1.0' }}</span>
+            <span>{{ node.agent_version?.startsWith('v') ? node.agent_version : 'v' + (node.agent_version || '1.0') }}</span>
           </div>
 
           <!-- 进度条 -->
@@ -833,11 +833,11 @@
 
         <!-- 内部独立滚动区域 -->
         <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
-          <!-- 自定义位数 (3~5 位) -->
+          <!-- 自定义位数 (3~6 位) -->
           <div>
-            <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 5 位):</label>
-            <div class="grid grid-cols-3 gap-2">
-              <button type="button" v-for="len in [3, 4, 5]" :key="len"
+            <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 6 位):</label>
+            <div class="grid grid-cols-4 gap-2">
+              <button type="button" v-for="len in [3, 4, 5, 6]" :key="len"
                 @click="dispatchForm.length = len"
                 :class="dispatchForm.length === len ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'"
                 class="py-2 rounded-xl border text-center font-bold text-xs transition">
@@ -1480,13 +1480,14 @@
         const previewExamples = computed(() => {
           const len = dispatchForm.value.length;
           const hasH = dispatchForm.value.use_hyphen;
-          const sample = dispatchForm.value.use_digits && !dispatchForm.value.use_letters ? '12345' : (dispatchForm.value.use_digits ? 'a1b2c' : 'abcde');
+          const sample = dispatchForm.value.use_digits && !dispatchForm.value.use_letters ? '123456' : (dispatchForm.value.use_digits ? 'a1b2c3' : 'abcdef');
           if (!hasH) {
             return `${sample.slice(0, len)}.com`;
           }
           if (len === 3) return 'a-b.com, ab-c.com';
           if (len === 4) return 'ab-cd.com, a-bcd.com, abc-d.com';
-          return 'ab-cde.com, abc-de.com';
+          if (len === 5) return 'ab-cde.com, abc-de.com';
+          return 'abc-def.com, ab-cdef.com';
         });
 
         const perNodeCount = computed(() => {

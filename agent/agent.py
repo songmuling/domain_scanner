@@ -21,6 +21,9 @@ import threading
 import queue
 import signal
 
+# 客户端统一时间戳构建版本号 (yy.mmdd.hhmm 格式)
+AGENT_VERSION = "26.1110.2200"
+
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, SCRIPT_DIR)
@@ -43,7 +46,27 @@ class ScanWorker:
         self.suffix = task_info.get("suffix", "com")
         self.shard_num = task_info.get("shard_num", 1)
         self.shard_total = task_info.get("shard_total", 1)
-        self.threads = task_info.get("threads", 25)
+
+        # 并发线程数控制：本地上限 MAX_THREADS 与 Hub 调度下发取最小值 (保护弱节点、让主力机满载)
+        hub_threads = int(task_info.get("threads", 25))
+        max_threads_env = os.environ.get("MAX_THREADS") or os.environ.get("SCAN_MAX_THREADS")
+        cli_max = getattr(hub_client, "cli_max_threads", None) if hub_client else None
+
+        if max_threads_env and max_threads_env.strip().isdigit():
+            self.max_threads = int(max_threads_env.strip())
+        elif cli_max and cli_max > 0:
+            self.max_threads = cli_max
+        else:
+            self.max_threads = None
+
+        if self.max_threads is not None and self.max_threads > 0:
+            self.threads = min(hub_threads, self.max_threads)
+            if self.threads < hub_threads:
+                print(f"[*] 【安全限流】受本地 MAX_THREADS={self.max_threads} 约束，实际并发调整为 {self.threads} 线程 (Hub下发值: {hub_threads})")
+            else:
+                print(f"[*] 并发线程数: {self.threads} (Hub下发: {hub_threads}, 本地上限: {self.max_threads})")
+        else:
+            self.threads = hub_threads
 
         # 尾部援助分流字段 (Work-Stealing)
         self.is_aid = bool(task_info.get("is_aid", False))
@@ -255,7 +278,7 @@ class HubClient:
         payload = {
             "node_id": self.node_id,
             "os_info": f"{platform.system()} {platform.machine()}",
-            "version": "2.0"
+            "version": AGENT_VERSION
         }
         try:
             res = self._post("/api/agent/register", payload)
@@ -302,7 +325,8 @@ class HubClient:
             "total": total,
             "speed": speed,
             "available": avail,
-            "status": status
+            "status": status,
+            "version": AGENT_VERSION
         }
         try:
             return self._post("/api/agent/heartbeat", payload, timeout=3)
@@ -382,6 +406,9 @@ def main():
                         help="集群通信鉴权 Token")
     parser.add_argument("--node", default=os.environ.get("NODE_ID", ""),
                         help="节点名称标识")
+    parser.add_argument("--max-threads", type=int,
+                        default=int(os.environ.get("MAX_THREADS") or os.environ.get("SCAN_MAX_THREADS") or 0),
+                        help="本地最大并发线程数上限 (安全约束，取 min(Hub下发, max-threads))")
     args = parser.parse_args()
 
     node_id = args.node.strip() or auto_detect_node_id()
@@ -389,11 +416,17 @@ def main():
 
     print(f"==================================================")
     print(f" ⚡ Domain Agent 集群客户端启动中...")
+    print(f" 客户端版本: v{AGENT_VERSION}")
     print(f" 节点标识: {node_id}")
     print(f" Master Hub: {args.hub}")
+    if args.max_threads > 0:
+        print(f" 本地最大线程上限: {args.max_threads} (min模式生效)")
+    else:
+        print(f" 本地最大线程上限: 无限制 (完全跟随 Hub 调度)")
     print(f"==================================================")
 
     client = HubClient(args.hub, token, node_id)
+    client.cli_max_threads = args.max_threads if args.max_threads > 0 else None
 
     # 首次注册
     while not client.register():

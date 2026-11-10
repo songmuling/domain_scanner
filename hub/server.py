@@ -1204,12 +1204,13 @@ class HubHandler(BaseHTTPRequestHandler):
                 speed = float(data.get("speed", 0.0))
                 avail_cnt = int(data.get("available", 0))
                 client_status = data.get("status", "idle")
+                agent_ver = data.get("version")
 
                 with get_db() as conn:
                     # 更新节点状态
                     conn.execute("""
-                    INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, last_seen)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, agent_version, last_seen)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, '1.0'), CURRENT_TIMESTAMP)
                     ON CONFLICT(node_id) DO UPDATE SET
                         ip = excluded.ip,
                         status = excluded.status,
@@ -1220,8 +1221,9 @@ class HubHandler(BaseHTTPRequestHandler):
                         total = excluded.total,
                         speed = excluded.speed,
                         available_count = excluded.available_count,
+                        agent_version = CASE WHEN excluded.agent_version IS NOT NULL AND excluded.agent_version != '' THEN excluded.agent_version ELSE nodes.agent_version END,
                         last_seen = CURRENT_TIMESTAMP;
-                    """, (node_id, self.client_address[0], client_status, task_id, mode, shard, scanned, total, speed, avail_cnt))
+                    """, (node_id, self.client_address[0], client_status, task_id, mode, shard, scanned, total, speed, avail_cnt, agent_ver))
 
                     # 如果在跑任务，同步更新任务分片进度
                     if task_id:
@@ -1565,8 +1567,8 @@ class HubHandler(BaseHTTPRequestHandler):
             threads = int(data.get("threads", 25))
             selected_nodes = data.get("nodes", [])
 
-            if length not in (3, 4, 5):
-                self.send_json({"code": 1, "msg": "字符长度仅支持 3 ~ 5 位"}, 400)
+            if length not in (3, 4, 5, 6):
+                self.send_json({"code": 1, "msg": "字符长度仅支持 3 ~ 6 位"}, 400)
                 return
             if not use_letters and not use_digits:
                 self.send_json({"code": 1, "msg": "必须勾选字母或数字其中一种"}, 400)
