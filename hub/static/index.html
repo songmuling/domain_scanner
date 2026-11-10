@@ -106,7 +106,28 @@
       border-color: #e2e8f0 !important;
     }
 
-    /* 关键对比度保障：高亮/激活/选中的深色背景按钮，文字必须始终自动为清晰纯白色 */
+    /* 浅色模式下的常规文字色彩 (文字转深色高对比度) */
+    html:not(.dark) .text-white,
+    html:not(.dark) .text-slate-100,
+    html:not(.dark) .text-slate-200 {
+      color: #0f172a !important;
+    }
+
+    html:not(.dark) .text-slate-300,
+    html:not(.dark) .text-slate-400 {
+      color: #475569 !important;
+    }
+
+    html:not(.dark) .text-slate-500 {
+      color: #64748b !important;
+    }
+
+    html:not(.dark) .text-indigo-300,
+    html:not(.dark) .text-indigo-200 {
+      color: #4f46e5 !important;
+    }
+
+    /* 关键对比度保障：无论深色浅色，处于深色/高亮/激活背景下的文字，必须始终自动反白为亮白色 */
     .bg-indigo-600,
     .bg-indigo-600 *,
     .bg-indigo-700,
@@ -115,36 +136,35 @@
     .bg-indigo-500 *,
     .bg-rose-600,
     .bg-rose-600 *,
+    .bg-red-600,
+    .bg-red-600 *,
+    .bg-red-600\/80,
+    .bg-red-600\/80 *,
     .bg-emerald-600,
     .bg-emerald-600 *,
+    .bg-gradient-to-r,
+    .bg-gradient-to-r *,
+    .bg-gradient-to-tr,
+    .bg-gradient-to-tr *,
     html:not(.dark) .bg-indigo-600,
     html:not(.dark) .bg-indigo-600 *,
+    html:not(.dark) .bg-indigo-700,
+    html:not(.dark) .bg-indigo-700 *,
+    html:not(.dark) .bg-rose-600,
+    html:not(.dark) .bg-rose-600 *,
+    html:not(.dark) .bg-red-600,
+    html:not(.dark) .bg-red-600 *,
+    html:not(.dark) .bg-red-600\/80,
+    html:not(.dark) .bg-red-600\/80 *,
+    html:not(.dark) .bg-emerald-600,
+    html:not(.dark) .bg-emerald-600 *,
+    html:not(.dark) .bg-gradient-to-r,
+    html:not(.dark) .bg-gradient-to-r *,
+    html:not(.dark) .bg-gradient-to-tr,
+    html:not(.dark) .bg-gradient-to-tr *,
     html:not(.dark) button.bg-indigo-600,
     html:not(.dark) button.bg-indigo-600 * {
       color: #ffffff !important;
-    }
-
-    /* 浅色模式下的常规文字色彩（排除了激活高亮背景） */
-    html:not(.dark) h1,
-    html:not(.dark) h2,
-    html:not(.dark) h3,
-    html:not(.dark) .text-slate-100:not(.bg-indigo-600):not(.bg-indigo-600 *),
-    html:not(.dark) .text-slate-200:not(.bg-indigo-600):not(.bg-indigo-600 *) {
-      color: #0f172a !important;
-    }
-
-    html:not(.dark) .text-slate-300:not(.bg-indigo-600):not(.bg-indigo-600 *),
-    html:not(.dark) .text-slate-400:not(.bg-indigo-600):not(.bg-indigo-600 *) {
-      color: #475569 !important;
-    }
-
-    html:not(.dark) .text-slate-500 {
-      color: #64748b !important;
-    }
-
-    html:not(.dark) .text-indigo-300:not(.bg-indigo-600):not(.bg-indigo-600 *),
-    html:not(.dark) .text-indigo-200:not(.bg-indigo-600):not(.bg-indigo-600 *) {
-      color: #4f46e5 !important;
     }
 
     html:not(.dark) .text-emerald-400 {
