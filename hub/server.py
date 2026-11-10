@@ -11,6 +11,7 @@ Domain Hub - 统一域名扫描集群 Master 控制中心 (Nezha 架构)
 
 import os
 import sys
+import re
 import json
 import sqlite3
 import secrets
