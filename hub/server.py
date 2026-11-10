@@ -11,6 +11,7 @@ Domain Hub - 统一域名扫描集群 Master 控制中心 (Nezha 架构)
 
 import os
 import sys
+import time
 import re
 import json
 import sqlite3
@@ -40,6 +41,118 @@ def clean_domain_name(s):
     if not s:
         return ""
     return s.split(".")[0].replace("-", "").lower()
+
+VOWELS_SET = set("aeiou")
+RARE_CONSONANTS_SET = set("qxzvy")
+
+def analyze_domain_features(domain):
+    clean_name = clean_domain_name(domain)
+    if not clean_name:
+        return {
+            "max_repeat": 1, "max_seq": 1, "max_seq_asc": 1, "max_seq_desc": 1,
+            "is_palindrome": 0, "patterns": "", "is_pronounceable": 0,
+            "has_vowel": 0, "is_clean": 1
+        }
+
+    # 1. 最高连字 / 叠字 / 豹子
+    max_rep = 1
+    cur_rep = 1
+    for i in range(1, len(clean_name)):
+        if clean_name[i] == clean_name[i - 1]:
+            cur_rep += 1
+            if cur_rep > max_rep:
+                max_rep = cur_rep
+        else:
+            cur_rep = 1
+
+    # 2. 最高顺子 / 连号 (区分正序与倒序)
+    max_asc = 1
+    cur_asc = 1
+    max_desc = 1
+    cur_desc = 1
+    for i in range(1, len(clean_name)):
+        c1, c2 = clean_name[i - 1], clean_name[i]
+        diff = ord(c2) - ord(c1)
+        same_type = (c1.isalpha() and c2.isalpha()) or (c1.isdigit() and c2.isdigit())
+        if same_type and diff == 1:
+            cur_asc += 1
+            if cur_asc > max_asc:
+                max_asc = cur_asc
+        else:
+            cur_asc = 1
+
+        if same_type and diff == -1:
+            cur_desc += 1
+            if cur_desc > max_desc:
+                max_desc = cur_desc
+        else:
+            cur_desc = 1
+    max_seq = max(max_asc, max_desc)
+
+    # 3. 对称回文 (3字及以上)
+    is_palindrome = 1 if (len(clean_name) >= 3 and clean_name == clean_name[::-1]) else 0
+
+    # 4. 特殊形态结构 (AABB / ABAB / ABBA / AAAB / BAAA)
+    matched_pats = []
+    if len(clean_name) >= 4:
+        for i in range(len(clean_name) - 3):
+            w = clean_name[i:i + 4]
+            c1, c2, c3, c4 = w[0], w[1], w[2], w[3]
+            if c1 == c2 and c3 == c4 and c1 != c3 and "aabb" not in matched_pats:
+                matched_pats.append("aabb")
+            if c1 == c3 and c2 == c4 and c1 != c2 and "abab" not in matched_pats:
+                matched_pats.append("abab")
+            if c1 == c4 and c2 == c3 and c1 != c2 and "abba" not in matched_pats:
+                matched_pats.append("abba")
+            if c1 == c2 == c3 and c1 != c4 and "aaab" not in matched_pats:
+                matched_pats.append("aaab")
+            if c2 == c3 == c4 and c1 != c2 and "baaa" not in matched_pats:
+                matched_pats.append("baaa")
+    patterns_str = ",".join(matched_pats)
+
+    # 5. 自然发音 / 易读双拼 (元辅交替，不连续出现>=3辅音或>=3元音)
+    is_pron = 0
+    if clean_name.isalpha() and len(clean_name) >= 3:
+        is_pron = 1
+        c_count = 0
+        for ch in clean_name:
+            if ch in VOWELS_SET:
+                c_count = 0
+            else:
+                c_count += 1
+                if c_count >= 3:
+                    is_pron = 0
+                    break
+        if is_pron:
+            v_count = 0
+            for ch in clean_name:
+                if ch in VOWELS_SET:
+                    v_count += 1
+                    if v_count >= 3:
+                        is_pron = 0
+                        break
+                else:
+                    v_count = 0
+            if is_pron and not any(ch in VOWELS_SET for ch in clean_name):
+                is_pron = 0
+
+    # 6. 包含元音
+    has_vowel = 1 if any(ch in VOWELS_SET for ch in clean_name) else 0
+
+    # 7. 避冷门 (无生僻辅音 q, x, z, v, y)
+    is_clean = 1 if not any(ch in RARE_CONSONANTS_SET for ch in clean_name) else 0
+
+    return {
+        "max_repeat": max_rep,
+        "max_seq": max_seq,
+        "max_seq_asc": max_asc,
+        "max_seq_desc": max_desc,
+        "is_palindrome": is_palindrome,
+        "patterns": patterns_str,
+        "is_pronounceable": is_pron,
+        "has_vowel": has_vowel,
+        "is_clean": is_clean
+    }
 
 def has_consecutive_same(s, n):
     name = clean_domain_name(s)
@@ -108,7 +221,6 @@ def match_pattern(s, pat):
             return 1
     return 0
 
-VOWELS_SET = set("aeiou")
 
 def is_pronounceable(s):
     name = clean_domain_name(s)
@@ -146,7 +258,7 @@ def get_db():
 def init_db_and_token():
     with DB_LOCK:
         with get_db() as conn:
-            # 1. 域名资产表 (is_starred 收藏与 status 可用性解耦)
+            # 1. 域名资产表 (包含预计算特征索引字段)
             conn.execute("""
             CREATE TABLE IF NOT EXISTS domains (
                 domain TEXT PRIMARY KEY,
@@ -155,6 +267,15 @@ def init_db_and_token():
                 status TEXT DEFAULT 'available',
                 is_starred INTEGER DEFAULT 0,
                 reason TEXT,
+                max_repeat INTEGER DEFAULT NULL,
+                max_seq INTEGER DEFAULT NULL,
+                max_seq_asc INTEGER DEFAULT NULL,
+                max_seq_desc INTEGER DEFAULT NULL,
+                is_palindrome INTEGER DEFAULT NULL,
+                patterns TEXT DEFAULT NULL,
+                is_pronounceable INTEGER DEFAULT NULL,
+                has_vowel INTEGER DEFAULT NULL,
+                is_clean INTEGER DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
@@ -225,7 +346,7 @@ def init_db_and_token():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_created ON domains(created_at);")
 
-            # 自动迁移 domains 表增加 is_starred 字段并解耦收藏与可用状态
+            # 自动迁移 domains 表增加 is_starred 与特征预计算字段
             cur = conn.cursor()
             cur.execute("PRAGMA table_info(domains);")
             domain_cols = {row["name"] for row in cur.fetchall()}
@@ -238,6 +359,33 @@ def init_db_and_token():
             conn.execute("UPDATE domains SET is_starred = 1, status = 'available' WHERE status = 'starred';")
             conn.execute("UPDATE domains SET status = 'available' WHERE status IN ('purchased', 'discarded');")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_starred ON domains(is_starred);")
+
+            feature_cols = [
+                ("max_repeat", "INTEGER DEFAULT NULL"),
+                ("max_seq", "INTEGER DEFAULT NULL"),
+                ("max_seq_asc", "INTEGER DEFAULT NULL"),
+                ("max_seq_desc", "INTEGER DEFAULT NULL"),
+                ("is_palindrome", "INTEGER DEFAULT NULL"),
+                ("patterns", "TEXT DEFAULT NULL"),
+                ("is_pronounceable", "INTEGER DEFAULT NULL"),
+                ("has_vowel", "INTEGER DEFAULT NULL"),
+                ("is_clean", "INTEGER DEFAULT NULL"),
+            ]
+            for col, col_type in feature_cols:
+                if col not in domain_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE domains ADD COLUMN {col} {col_type};")
+                    except Exception:
+                        pass
+
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_repeat ON domains(max_repeat);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_seq ON domains(max_seq);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_seq_asc ON domains(max_seq_asc);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_seq_desc ON domains(max_seq_desc);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_pronounce ON domains(is_pronounceable);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_palindrome ON domains(is_palindrome);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_vowel ON domains(has_vowel);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_clean ON domains(is_clean);")
 
             # 自动迁移 nodes 旧表结构
             cur = conn.cursor()
@@ -290,8 +438,80 @@ def init_db_and_token():
             conn.commit()
             return final_token
 
+def start_feature_backfill_worker():
+    """后台异步计算并补齐存量历史资产的特征索引字段，毫秒级无锁分批，不阻塞主服务"""
+    def _worker():
+        time.sleep(1.0)
+        try:
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT COUNT(*) FROM domains WHERE max_repeat IS NULL;")
+                unindexed_cnt = cur.fetchone()[0]
+
+            if unindexed_cnt == 0:
+                return
+
+            print(f"[{get_beijing_time_str()}] 正在后台为 {unindexed_cnt:,} 个存量资产预计算特征索引 (连字/顺子/回文/双拼/冷门)...")
+            batch_size = 5000
+            processed = 0
+            t0 = time.time()
+
+            while True:
+                with get_db() as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT domain FROM domains WHERE max_repeat IS NULL LIMIT ?;", (batch_size,))
+                    rows = cur.fetchall()
+                    if not rows:
+                        break
+
+                    updates = []
+                    for r in rows:
+                        d_name = r["domain"]
+                        f = analyze_domain_features(d_name)
+                        updates.append((
+                            f["max_repeat"],
+                            f["max_seq"],
+                            f["max_seq_asc"],
+                            f["max_seq_desc"],
+                            f["is_palindrome"],
+                            f["patterns"],
+                            f["is_pronounceable"],
+                            f["has_vowel"],
+                            f["is_clean"],
+                            d_name
+                        ))
+
+                    conn.executemany("""
+                    UPDATE domains SET
+                        max_repeat = ?,
+                        max_seq = ?,
+                        max_seq_asc = ?,
+                        max_seq_desc = ?,
+                        is_palindrome = ?,
+                        patterns = ?,
+                        is_pronounceable = ?,
+                        has_vowel = ?,
+                        is_clean = ?
+                    WHERE domain = ?;
+                    """, updates)
+                    conn.commit()
+                    processed += len(updates)
+                    if processed % 50000 == 0 or processed >= unindexed_cnt:
+                        pct = min(100, int((processed / unindexed_cnt) * 100))
+                        print(f"[{get_beijing_time_str()}] 存量特征索引计算进度: {processed:,} / {unindexed_cnt:,} ({pct}%)")
+
+                time.sleep(0.05)  # 每次微让出锁 50ms，确保节点扫描上报零等待
+
+            cost = round(time.time() - t0, 2)
+            print(f"[{get_beijing_time_str()}] 存量资产特征索引构建完成！共处理 {processed:,} 条记录，耗时 {cost} 秒。")
+        except Exception as e:
+            sys.stderr.write(f"[{get_beijing_time_str()}] 特征索引后台构建异常: {e}\n")
+
+    threading.Thread(target=_worker, daemon=True).start()
+
 MASTER_TOKEN = init_db_and_token()
 print(f"[{get_beijing_time_str()}] Domain Hub 核心数据库已就绪，当前集群通信 Token: {MASTER_TOKEN}")
+start_feature_backfill_worker()
 
 def get_current_token():
     env_token = os.environ.get("HUB_TOKEN", "").strip()
@@ -494,35 +714,46 @@ def build_domain_filters(params):
         where_clauses.append("domain LIKE ?")
         bind_params.append(f"%{suffix}.com")
 
-    # 5. 淘金规则：包含元音 / 剔除生僻声母
+    # 5. 淘金规则：包含元音 / 剔除生僻声母 (利用预计算索引快速过滤)
     if has_vowel:
-        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) GLOB '*[aeiou]*'")
+        where_clauses.append("has_vowel = 1")
     if exclude_rare:
-        where_clauses.append("substr(domain, 1, instr(domain, '.') - 1) NOT GLOB '*[qxzvy]*'")
+        where_clauses.append("is_clean = 1")
 
-    # 6. 靓号规则：连字 (豹子/叠字 N 连字，例如选 3 匹配 aaa, 888 等)
+    # 6. 靓号规则：连字 (豹子/叠字 N 连字，例如选 3 匹配 aaa, 888 等，直接命中 B-Tree 索引)
     repeat_count = params.get("repeat_count", [""])[0].strip()
     if repeat_count.isdigit() and int(repeat_count) >= 2:
-        where_clauses.append("has_consecutive_same(domain, ?) = 1")
+        where_clauses.append("max_repeat >= ?")
         bind_params.append(int(repeat_count))
 
-    # 7. 靓号规则：连号 (顺子 N 连号，支持正序/倒序/双向，例如选 3 匹配 123/abc/cba/321 等)
+    # 7. 靓号规则：连号 (顺子 N 连号，支持正序/倒序/双向，例如选 3 匹配 123/abc/cba/321 等，直接命中 B-Tree 索引)
     seq_count = params.get("seq_count", [""])[0].strip()
     seq_dir = params.get("seq_dir", ["any"])[0].strip().lower()
     if seq_count.isdigit() and int(seq_count) >= 2:
-        where_clauses.append("has_sequential(domain, ?, ?) = 1")
-        bind_params.extend([int(seq_count), seq_dir])
+        s_cnt = int(seq_count)
+        if seq_dir == "asc":
+            where_clauses.append("max_seq_asc >= ?")
+            bind_params.append(s_cnt)
+        elif seq_dir == "desc":
+            where_clauses.append("max_seq_desc >= ?")
+            bind_params.append(s_cnt)
+        else:
+            where_clauses.append("max_seq >= ?")
+            bind_params.append(s_cnt)
 
     # 8. 靓号规则：形态结构 (回文 palindrome, AABB, ABAB, ABBA, AAAB, BAAA 等)
     pattern = params.get("pattern", [""])[0].strip().lower()
     if pattern:
-        where_clauses.append("match_pattern(domain, ?) = 1")
-        bind_params.append(pattern)
+        if pattern == "palindrome":
+            where_clauses.append("is_palindrome = 1")
+        else:
+            where_clauses.append("patterns LIKE ?")
+            bind_params.append(f"%{pattern}%")
 
     # 9. 靓号规则：自然发音 (易读元音辅音交替双拼)
     pronounceable = params.get("pronounceable", ["0"])[0] == "1"
     if pronounceable:
-        where_clauses.append("is_pronounceable(domain) = 1")
+        where_clauses.append("is_pronounceable = 1")
 
     where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
     return where_sql, bind_params
@@ -1015,15 +1246,35 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         if not d_name:
                             continue
+                        feats = analyze_domain_features(d_name)
                         try:
                             conn.execute("""
-                            INSERT INTO domains (domain, mode, node_id, status, reason, created_at, updated_at)
-                            VALUES (?, ?, ?, 'available', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            INSERT INTO domains (
+                                domain, mode, node_id, status, reason,
+                                max_repeat, max_seq, max_seq_asc, max_seq_desc,
+                                is_palindrome, patterns, is_pronounceable, has_vowel, is_clean,
+                                created_at, updated_at
+                            )
+                            VALUES (?, ?, ?, 'available', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                             ON CONFLICT(domain) DO UPDATE SET
                                 node_id = excluded.node_id,
                                 reason = excluded.reason,
+                                max_repeat = excluded.max_repeat,
+                                max_seq = excluded.max_seq,
+                                max_seq_asc = excluded.max_seq_asc,
+                                max_seq_desc = excluded.max_seq_desc,
+                                is_palindrome = excluded.is_palindrome,
+                                patterns = excluded.patterns,
+                                is_pronounceable = excluded.is_pronounceable,
+                                has_vowel = excluded.has_vowel,
+                                is_clean = excluded.is_clean,
                                 updated_at = CURRENT_TIMESTAMP;
-                            """, (d_name, d_mode, node_id, d_reason))
+                            """, (
+                                d_name, d_mode, node_id, d_reason,
+                                feats["max_repeat"], feats["max_seq"], feats["max_seq_asc"], feats["max_seq_desc"],
+                                feats["is_palindrome"], feats["patterns"], feats["is_pronounceable"],
+                                feats["has_vowel"], feats["is_clean"]
+                            ))
                             added += 1
                         except Exception:
                             pass
@@ -1296,11 +1547,21 @@ class HubHandler(BaseHTTPRequestHandler):
                         l = len(clean_name)
                         m = f"{l}letter-" if has_h else f"{l}letter"
 
+                    feats = analyze_domain_features(d)
                     try:
                         conn.execute("""
-                        INSERT OR IGNORE INTO domains (domain, mode, node_id, status, reason)
-                        VALUES (?, ?, ?, 'available', '历史数据导入');
-                        """, (d, m, node_id))
+                        INSERT OR IGNORE INTO domains (
+                            domain, mode, node_id, status, reason,
+                            max_repeat, max_seq, max_seq_asc, max_seq_desc,
+                            is_palindrome, patterns, is_pronounceable, has_vowel, is_clean
+                        )
+                        VALUES (?, ?, ?, 'available', '历史数据导入', ?, ?, ?, ?, ?, ?, ?, ?, ?);
+                        """, (
+                            d, m, node_id,
+                            feats["max_repeat"], feats["max_seq"], feats["max_seq_asc"], feats["max_seq_desc"],
+                            feats["is_palindrome"], feats["patterns"], feats["is_pronounceable"],
+                            feats["has_vowel"], feats["is_clean"]
+                        ))
                         added += 1
                     except Exception:
                         pass
