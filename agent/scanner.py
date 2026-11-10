@@ -13,13 +13,121 @@ import ssl
 import time
 import json
 import socket
+import threading
 import urllib.request
 import urllib.error
 
-# 强制底层网络优先使用 IPv4，彻底规避双栈宽带环境下跨洋 IPv6 握手黑洞与 PMTUD 丢包
+# ----------------- Verisign RDAP 自适应优选与 Anycast 极速选路 -----------------
 _orig_getaddrinfo = socket.getaddrinfo
+OPTIMAL_RDAP_IP = None
+KNOWN_RDAP_IPS = ["192.68.130.30", "192.81.185.30"]
+_fast_path_lock = threading.Lock()
+_fast_path_initialized = False
 
-def _ipv4_preferred_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+def init_rdap_fast_path(force=False):
+    """
+    节点启动时自适应测速选路 (IP Racing):
+    1. 解析并结合已知 Verisign RDAP Anycast 候选节点
+    2. 并发探测 TCP 握手延时 (透明代理环境下自动使用 TLS 握手比对真实上游耗时)
+    3. 自动锁定当前节点网络物理拓扑下延迟最低的 IP
+    4. 进程内安全注入 getaddrinfo 钩子，标准保留 SNI 证书协商与 Host 头
+    """
+    global OPTIMAL_RDAP_IP, _fast_path_initialized
+    with _fast_path_lock:
+        if _fast_path_initialized and not force:
+            return
+        _fast_path_initialized = True
+
+    candidates = set(KNOWN_RDAP_IPS)
+    try:
+        addr_info = _orig_getaddrinfo("rdap.verisign.com", 443, socket.AF_INET, socket.SOCK_STREAM)
+        for item in addr_info:
+            ip = item[4][0]
+            if ip:
+                candidates.add(ip)
+    except Exception:
+        pass
+
+    results = {}
+    res_lock = threading.Lock()
+
+    def _probe_tcp(target_ip):
+        t0 = time.time()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(1.5)
+        try:
+            s.connect((target_ip, 443))
+            rtt = (time.time() - t0) * 1000
+            s.close()
+            with res_lock:
+                results[target_ip] = rtt
+        except Exception:
+            with res_lock:
+                results[target_ip] = 999999.0
+
+    threads = [threading.Thread(target=_probe_tcp, args=(ip,), daemon=True) for ip in candidates]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=2.0)
+
+    # 若所有候选 IP 的 TCP 握手均 < 5ms，说明存在本地透明代理 (如软路由 PassWall/Clash 本地即时响应)
+    all_fast_proxy = bool(results) and all(rtt < 5.0 for rtt in results.values())
+    if all_fast_proxy:
+        tls_results = {}
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        def _probe_tls(target_ip):
+            t0 = time.time()
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(3.0)
+            try:
+                s.connect((target_ip, 443))
+                ss = ctx.wrap_socket(s, server_hostname="rdap.verisign.com")
+                ss.close()
+                with res_lock:
+                    tls_results[target_ip] = (time.time() - t0) * 1000
+            except Exception:
+                with res_lock:
+                    tls_results[target_ip] = 999999.0
+
+        threads = [threading.Thread(target=_probe_tls, args=(ip,), daemon=True) for ip in candidates]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=3.5)
+
+        valid_tls = [item for item in tls_results.items() if item[1] < 999999.0]
+        if valid_tls:
+            valid_tls.sort(key=lambda x: x[1])
+            OPTIMAL_RDAP_IP = valid_tls[0][0]
+            print(f"[FastPath] 检测到软路由透明代理，TLS 上游测速选优: 锁定 {OPTIMAL_RDAP_IP} (耗时: {valid_tls[0][1]:.1f}ms)", flush=True)
+            return
+        else:
+            OPTIMAL_RDAP_IP = "192.81.185.30"
+            print(f"[FastPath] 透明代理探测超时，默认锁定亚洲 POP: {OPTIMAL_RDAP_IP}", flush=True)
+            return
+
+    valid_tcp = [item for item in results.items() if item[1] < 999999.0]
+    if valid_tcp:
+        valid_tcp.sort(key=lambda x: x[1])
+        OPTIMAL_RDAP_IP = valid_tcp[0][0]
+        print(f"[FastPath] RDAP Anycast 自适应选优完成: 锁定 {OPTIMAL_RDAP_IP} (TCP握手: {valid_tcp[0][1]:.1f}ms)", flush=True)
+    else:
+        _fast_path_initialized = False
+        print("[FastPath] Anycast 测速暂未响应，保持系统默认 DNS 解析 (稍后自动重试)", flush=True)
+
+def _adaptive_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    # 针对 RDAP 官方终验权威，优先重定向到自适应最优 Anycast IP
+    if host and host.rstrip(".") == "rdap.verisign.com" and OPTIMAL_RDAP_IP:
+        try:
+            return _orig_getaddrinfo(OPTIMAL_RDAP_IP, port, socket.AF_INET, type, proto, flags)
+        except Exception:
+            pass
+
+    # 强制底层优先使用 IPv4，彻底规避双栈宽带跨洋 IPv6 握手黑洞与 PMTUD 丢包
     if family == 0 or family == getattr(socket, "AF_UNSPEC", 0):
         try:
             res = _orig_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
@@ -29,7 +137,13 @@ def _ipv4_preferred_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
             pass
     return _orig_getaddrinfo(host, port, family, type, proto, flags)
 
-socket.getaddrinfo = _ipv4_preferred_getaddrinfo
+socket.getaddrinfo = _adaptive_getaddrinfo
+
+# 启动自适应测速 (导入时即刻探测)
+try:
+    init_rdap_fast_path()
+except Exception:
+    pass
 
 # 全局忽略部分特殊网络环境下的 SSL 证书校验错误
 ssl_context = ssl.create_default_context()
@@ -149,6 +263,12 @@ def dns_has_record(domain):
 
 def check_rdap_availability(domain):
     """步骤 2: Verisign 官方权威 RDAP 终验"""
+    if not _fast_path_initialized:
+        try:
+            init_rdap_fast_path()
+        except Exception:
+            pass
+
     url = f"https://rdap.verisign.com/com/v1/domain/{domain}"
     req = urllib.request.Request(
         url,
