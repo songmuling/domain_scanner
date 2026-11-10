@@ -1039,11 +1039,11 @@ def build_domain_filters(params):
         bind_params.append(f"%{search}%")
 
     if prefix:
-        where_clauses.append("domains.domain LIKE ?")
+        where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
         bind_params.append(f"{prefix}%")
 
     if suffix:
-        where_clauses.append("domains.domain LIKE ?")
+        where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
         bind_params.append(f"%{suffix}.com")
 
     # 5. 淘金规则：包含元音 / 剔除生僻声母 (利用预计算索引快速过滤)
