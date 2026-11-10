@@ -33,6 +33,7 @@ import argparse
 import itertools
 import urllib.request
 import urllib.error
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # 颜色控制
@@ -48,6 +49,25 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 ALL_OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
 
 ssl_context = ssl.create_default_context()
+
+def hub_post_async(hub_url, endpoint, payload):
+    """异步非阻塞上报数据到 Domain Hub 中心监控服务"""
+    if not hub_url or hub_url.lower() in ("none", "false", "0", "off", "no"):
+        return
+    def _worker():
+        try:
+            url = f"{hub_url.rstrip('/')}{endpoint}"
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json", "User-Agent": "DomainScanner-Reporter/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                pass
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
 
 SUPPORTED_MODES = {
     # 标准模式 (纯数字 / 纯字母 / 混合 / 全量)
@@ -352,8 +372,31 @@ def main():
     parser.add_argument("--suffix", default="com", help="域名后缀 (默认: com)")
     parser.add_argument("--threads", type=int, default=20, help="并发线程数 (默认: 20)")
     parser.add_argument("--verbose", action="store_true", help="打印所有已占用域名详情")
+    parser.add_argument("--hub", default=os.environ.get("DOMAIN_HUB_URL", "http://192.168.200.12:8088"),
+                        help="Domain Hub 中心监控服务 URL (默认: http://192.168.200.12:8088, 设为 'none' 禁用)")
+    parser.add_argument("--node", default=os.environ.get("NODE_ID", ""),
+                        help="当前节点名称 (默认自动根据主机名推断)")
 
     args = parser.parse_args()
+
+    # 智能推断当前节点 ID
+    node_id = args.node
+    if not node_id:
+        hname = socket.gethostname().lower()
+        if "jp" in hname:
+            node_id = "Oracle-JP"
+        elif "kr" in hname:
+            node_id = "Oracle-KR"
+        elif "us" in hname:
+            node_id = "Google-US"
+        elif "bl" in hname:
+            node_id = "BL"
+        elif "ld" in hname:
+            node_id = "LD"
+        elif "fn" in hname or "nas" in hname:
+            node_id = "FN"
+        else:
+            node_id = socket.gethostname()
 
     # 智能解析模式与分片
     mode = "3all"
@@ -438,7 +481,7 @@ def main():
         except Exception:
             pass
 
-    def record_available_domain(dom):
+    def record_available_domain(dom, reason="404 未注册"):
         if dom not in seen_mode_domains:
             seen_mode_domains.add(dom)
             with open(mode_output_file, "a", encoding="utf-8") as f:
@@ -447,6 +490,13 @@ def main():
             seen_all_domains.add(dom)
             with open(all_output_file, "a", encoding="utf-8") as f:
                 f.write(f"{dom}\n")
+        # 实时异步上报至 Domain Hub
+        hub_post_async(args.hub, "/api/report", {
+            "domain": dom,
+            "mode": mode,
+            "node_id": node_id,
+            "reason": reason
+        })
 
     print(f"{CYAN}{BOLD}===================================================={RESET}")
     print(f" {BOLD}域名极速扫描器 (DNS初筛 + Verisign RDAP权威验证){RESET}")
@@ -458,6 +508,8 @@ def main():
     else:
         print(f"扫描模式: 单机全量扫描")
     print(f"并发线程: {args.threads} 线程")
+    if args.hub and args.hub.lower() not in ("none", "false", "0"):
+        print(f"中心监控: {GREEN}{args.hub}{RESET} (节点: {YELLOW}{node_id}{RESET})")
     print(f"模式专属清单: {mode_output_file}")
     print(f"全局汇总清单: {all_output_file}")
     print(f"{CYAN}----------------------------------------------------{RESET}")
@@ -471,6 +523,21 @@ def main():
     skipping = bool(last_checkpoint)
 
     start_time = time.time()
+    last_hb_time = start_time
+    last_hb_count = checked_count
+
+    # 初始心跳
+    hub_post_async(args.hub, "/api/heartbeat", {
+        "node_id": node_id,
+        "mode": mode,
+        "shard": canonical_shard,
+        "scanned": checked_count,
+        "total": node_total,
+        "speed": 0.0,
+        "available": found_count,
+        "status": "running"
+    })
+
     batch = []
     try:
         with ThreadPoolExecutor(max_workers=args.threads) as executor:
@@ -491,7 +558,7 @@ def main():
                             found_domains.append((dom, reason))
                             msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
                             print(msg)
-                            record_available_domain(dom)
+                            record_available_domain(dom, reason)
                         else:
                             if args.verbose:
                                 print(f"{RED}[占用]{RESET} {dom}")
@@ -501,6 +568,24 @@ def main():
                     pct = (checked_count / node_total * 100) if node_total else 0
                     prefix_tag = f"[分片 {shard_num}/{shard_total}] " if shard_total > 1 else ""
                     print(f"-> {prefix_tag}进度: {checked_count:,}/{node_total:,} ({pct:.2f}%) | 发现可用: {found_count} 个", end="\r")
+
+                    # 周期性上报心跳 (3秒一次)
+                    now_t = time.time()
+                    if now_t - last_hb_time >= 3.0:
+                        cur_speed = (checked_count - last_hb_count) / (now_t - last_hb_time) if (now_t - last_hb_time) > 0 else 0
+                        hub_post_async(args.hub, "/api/heartbeat", {
+                            "node_id": node_id,
+                            "mode": mode,
+                            "shard": canonical_shard,
+                            "scanned": checked_count,
+                            "total": node_total,
+                            "speed": round(cur_speed, 1),
+                            "available": found_count,
+                            "status": "running"
+                        })
+                        last_hb_time = now_t
+                        last_hb_count = checked_count
+
                     batch = []
 
             # 处理剩余尾部
@@ -514,13 +599,24 @@ def main():
                         found_domains.append((dom, reason))
                         msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
                         print(msg)
-                        record_available_domain(dom)
+                        record_available_domain(dom, reason)
                 last_dom = batch[-1]
                 save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
 
     except KeyboardInterrupt:
         print(f"\n\n{YELLOW}[!] 扫描被用户中断 (Ctrl+C)，当前进度已安全保存。{RESET}")
     finally:
+        # 结束时发送最终心跳
+        hub_post_async(args.hub, "/api/heartbeat", {
+            "node_id": node_id,
+            "mode": mode,
+            "shard": canonical_shard,
+            "scanned": checked_count,
+            "total": node_total,
+            "speed": 0.0,
+            "available": found_count,
+            "status": "completed" if (node_total and checked_count >= node_total) else "paused"
+        })
         end_time = time.time()
         clean_shard = canonical_shard.replace('/', '_')
         report_file = os.path.join(SCRIPT_DIR, f"scan_report_{mode}_{clean_shard}.txt")

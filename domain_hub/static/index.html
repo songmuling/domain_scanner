@@ -1,0 +1,619 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Domain Radar - 域名监控中心</title>
+  <!-- Tailwind CSS & Font -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 50: '#eef2ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' },
+            dark: { 900: '#0f172a', 800: '#1e293b', 700: '#334155', 600: '#475569' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    [v-cloak] { display: none; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="bg-[#0b0f19] text-slate-100 min-h-screen font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+<div id="app" v-cloak class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
+
+  <!-- 顶部导航与总状态 -->
+  <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-black text-xl">
+        🌐
+      </div>
+      <div>
+        <div class="flex items-center gap-2">
+          <h1 class="text-xl font-bold tracking-tight text-white">Domain Radar 控制中心</h1>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/50">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>实时监控中
+          </span>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">多节点分布式扫描 · 权威RDAP校验 · 毫秒级智能筛选</p>
+      </div>
+    </div>
+
+    <!-- 顶部操作区 -->
+    <div class="flex items-center space-x-2">
+      <button @click="openImportModal = true" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        📥 导入历史TXT
+      </button>
+      <button @click="exportCurrent" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg shadow-sm transition flex items-center gap-1.5">
+        📤 导出结果
+      </button>
+      <button @click="refreshAll" :disabled="loading" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        <span :class="{'animate-spin': loading}">🔄</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 4 个关键数据指标 -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl relative overflow-hidden">
+      <div class="text-xs font-medium text-slate-400">当前可用域名总数</div>
+      <div class="text-2xl font-black text-white mt-1">{{ stats.total_available?.toLocaleString() || 0 }}</div>
+      <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+        <span>今日新发现:</span>
+        <span class="font-bold">+{{ stats.today_found || 0 }}</span>
+      </div>
+    </div>
+
+    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
+      <div class="text-xs font-medium text-slate-400">全网实时总扫速</div>
+      <div class="text-2xl font-black text-indigo-400 mt-1">
+        {{ stats.total_speed || 0 }} <span class="text-xs text-slate-400 font-normal">个/秒</span>
+      </div>
+      <div class="text-[11px] text-slate-400 mt-1">
+        活跃节点: <span class="text-white font-semibold">{{ stats.active_nodes || 0 }}</span> / {{ nodes.length || 6 }}
+      </div>
+    </div>
+
+    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
+      <div class="text-xs font-medium text-slate-400">我的星标收藏</div>
+      <div class="text-2xl font-black text-amber-400 mt-1">{{ stats.total_starred || 0 }}</div>
+      <div class="text-[11px] text-slate-400 mt-1">
+        已购买: <span class="text-emerald-400 font-semibold">{{ stats.total_purchased || 0 }}</span>
+      </div>
+    </div>
+
+    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
+      <div class="text-xs font-medium text-slate-400">热门分类分布</div>
+      <div class="text-xs text-slate-300 mt-2 flex flex-wrap gap-1.5">
+        <span v-for="(cnt, m) in stats.mode_stats" :key="m" class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-[10px]">
+          {{ m }}: <b class="text-white">{{ cnt }}</b>
+        </span>
+        <span v-if="!stats.mode_stats || Object.keys(stats.mode_stats).length === 0" class="text-slate-500 text-xs">暂无数据</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 6 节点分布式雷达卡片 -->
+  <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
+    <div class="flex items-center justify-between mb-3.5">
+      <div class="flex items-center gap-2">
+        <span class="text-base">🖥️</span>
+        <h2 class="text-sm font-semibold text-white tracking-wide">扫描节点实时雷达 (6 节点分布式)</h2>
+      </div>
+      <span class="text-xs text-slate-400">心跳自动轮询 3s</span>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+      <div v-for="node in displayNodes" :key="node.node_id"
+           class="bg-[#131b2e] border border-slate-800 rounded-xl p-3.5 hover:border-slate-700 transition">
+        <!-- 节点头部 -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="relative flex h-2 w-2">
+              <span v-if="node.status === 'running'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2" :class="node.status === 'running' ? 'bg-emerald-400' : 'bg-slate-500'"></span>
+            </span>
+            <span class="font-bold text-sm text-slate-200">{{ node.node_id }}</span>
+          </div>
+          <span v-if="node.mode" class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono">
+            {{ node.mode }} <span v-if="node.shard">({{ node.shard }})</span>
+          </span>
+          <span v-else class="text-[10px] text-slate-500">待命空闲</span>
+        </div>
+
+        <!-- 进度条 -->
+        <div class="mt-2.5">
+          <div class="flex justify-between text-[11px] text-slate-400 mb-1">
+            <span>进度: {{ node.percent }}%</span>
+            <span>{{ node.scanned?.toLocaleString() || 0 }} / {{ node.total?.toLocaleString() || 0 }}</span>
+          </div>
+          <div class="w-full bg-slate-800/80 rounded-full h-1.5 overflow-hidden">
+            <div class="bg-gradient-to-r from-indigo-500 to-violet-500 h-1.5 rounded-full transition-all duration-500"
+                 :style="{ width: node.percent + '%' }"></div>
+          </div>
+        </div>
+
+        <!-- 底部速率与命中 -->
+        <div class="mt-2.5 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px]">
+          <span class="text-slate-400">⚡ 速率: <b class="text-slate-200">{{ node.speed || 0 }}/s</b></span>
+          <span class="text-emerald-400">🎯 命中: <b>{{ node.available_count || 0 }}</b></span>
+          <span class="text-[10px] text-slate-500">{{ node.last_seen_str }}</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 域名探索与智能淘金主控制台 -->
+  <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
+    <!-- 标签栏与模式切换 -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+      <!-- 状态 Tabs -->
+      <div class="flex items-center space-x-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
+        <button v-for="tab in statusTabs" :key="tab.id"
+                @click="currentStatus = tab.id; page = 1; fetchDomains()"
+                :class="currentStatus === tab.id ? 'bg-indigo-600 text-white shadow' : 'text-slate-400 hover:text-slate-200'"
+                class="px-3 py-1 rounded-lg text-xs font-medium transition flex items-center gap-1.5">
+          <span>{{ tab.icon }}</span>
+          <span>{{ tab.label }}</span>
+        </button>
+      </div>
+
+      <!-- 分类模式 Tabs -->
+      <div class="flex items-center space-x-1.5 overflow-x-auto text-xs py-1">
+        <button v-for="m in modeOptions" :key="m.id"
+                @click="currentMode = m.id; page = 1; fetchDomains()"
+                :class="currentMode === m.id ? 'bg-slate-700 text-white border-slate-600' : 'bg-slate-800/60 text-slate-400 border-slate-800 hover:bg-slate-800'"
+                class="px-2.5 py-1 rounded-lg border transition whitespace-nowrap">
+          {{ m.label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 筛选工具栏 -->
+    <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
+      <!-- 搜索框 -->
+      <div class="md:col-span-4 relative">
+        <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()"
+               placeholder="🔍 搜索域名、前缀、后缀 (回车查询)..."
+               class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <!-- 快速前缀/后缀 -->
+      <div class="md:col-span-3 flex gap-2">
+        <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()"
+               placeholder="前缀如: ai-, go-"
+               class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+        <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()"
+               placeholder="后缀如: -os, -ai"
+               class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+      </div>
+
+      <!-- 专属特征过滤开关 -->
+      <div class="md:col-span-5 flex flex-wrap items-center justify-end gap-2 text-xs">
+        <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
+                :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
+                class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1">
+          <span>🔤 包含元音 (可读)</span>
+        </button>
+
+        <button @click="excludeRare = !excludeRare; page = 1; fetchDomains()"
+                :class="excludeRare ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
+                class="px-2.5 py-1.5 rounded-lg border transition flex items-center gap-1">
+          <span>🚫 剔除声母 q/x/z/v</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- 域名列表展示 -->
+    <div class="overflow-x-auto rounded-xl border border-slate-800">
+      <table class="w-full text-left border-collapse">
+        <thead>
+          <tr class="bg-slate-950/80 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
+            <th class="py-3 px-4">域名 (点击一键复制)</th>
+            <th class="py-3 px-3">模式</th>
+            <th class="py-3 px-3">发现节点</th>
+            <th class="py-3 px-3">发现时间</th>
+            <th class="py-3 px-4 text-center">一键直达购买</th>
+            <th class="py-3 px-4 text-right">操作管理</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-800/60 text-xs">
+          <tr v-for="item in domainList" :key="item.domain" class="hover:bg-slate-800/30 transition group">
+            <!-- 域名名称 -->
+            <td class="py-3 px-4">
+              <div class="flex items-center gap-2">
+                <span @click="copyText(item.domain)"
+                      title="点击复制"
+                      class="font-mono font-bold text-sm text-indigo-300 hover:text-white cursor-pointer transition flex items-center gap-1">
+                  {{ item.domain }}
+                  <span class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400">📋</span>
+                </span>
+                <span v-if="item.status === 'starred'" class="text-amber-400 text-xs" title="已收藏">⭐</span>
+                <span v-if="item.status === 'purchased'" class="text-emerald-400 text-xs font-bold px-1.5 py-0.5 rounded bg-emerald-950/60 border border-emerald-800/40">已购</span>
+              </div>
+            </td>
+
+            <!-- 模式标签 -->
+            <td class="py-3 px-3">
+              <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700/60 text-[10px] font-mono text-slate-300">
+                {{ item.mode || '未知' }}
+              </span>
+            </td>
+
+            <!-- 节点 -->
+            <td class="py-3 px-3 text-slate-400 font-mono text-[11px]">
+              {{ item.node_id || 'manual' }}
+            </td>
+
+            <!-- 时间 -->
+            <td class="py-3 px-3 text-slate-400 text-[11px]">
+              {{ formatTime(item.created_at) }}
+            </td>
+
+            <!-- 一键直达购买链接 -->
+            <td class="py-3 px-4">
+              <div class="flex items-center justify-center gap-1.5">
+                <a :href="'https://www.dynadot.com/domain/search.html?domain=' + item.domain" target="_blank"
+                   class="px-2 py-0.5 bg-blue-950/60 hover:bg-blue-900 border border-blue-800/60 text-blue-300 hover:text-white rounded text-[10px] transition">
+                  Dynadot
+                </a>
+                <a :href="'https://www.namesilo.com/domain/search-domains?query=' + item.domain" target="_blank"
+                   class="px-2 py-0.5 bg-sky-950/60 hover:bg-sky-900 border border-sky-800/60 text-sky-300 hover:text-white rounded text-[10px] transition">
+                  Namesilo
+                </a>
+                <a :href="'https://wanwang.aliyun.com/domain/searchresult/#/?keyword=' + item.domain" target="_blank"
+                   class="px-2 py-0.5 bg-orange-950/60 hover:bg-orange-900 border border-orange-800/60 text-orange-300 hover:text-white rounded text-[10px] transition">
+                  阿里云
+                </a>
+              </div>
+            </td>
+
+            <!-- 状态操作 -->
+            <td class="py-3 px-4 text-right">
+              <div class="flex items-center justify-end gap-1.5">
+                <!-- 复检 -->
+                <button @click="recheckDomain(item)" :disabled="item.rechecking"
+                        title="在线复检 RDAP"
+                        class="p-1 text-slate-400 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
+                  <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
+                </button>
+                <!-- 收藏 -->
+                <button @click="toggleStatus(item, item.status === 'starred' ? 'available' : 'starred')"
+                        :title="item.status === 'starred' ? '取消收藏' : '收藏'"
+                        class="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition">
+                  {{ item.status === 'starred' ? '⭐' : '☆' }}
+                </button>
+                <!-- 标为已购 -->
+                <button @click="toggleStatus(item, item.status === 'purchased' ? 'available' : 'purchased')"
+                        title="标记为已购"
+                        class="p-1 text-slate-400 hover:text-emerald-400 rounded hover:bg-slate-800 transition text-xs">
+                  🛒
+                </button>
+                <!-- 丢入垃圾桶 -->
+                <button @click="toggleStatus(item, 'discarded')"
+                        title="移至垃圾桶"
+                        class="p-1 text-slate-400 hover:text-red-400 rounded hover:bg-slate-800 transition text-xs">
+                  🗑️
+                </button>
+              </div>
+            </td>
+          </tr>
+
+          <!-- 空状态 -->
+          <tr v-if="domainList.length === 0">
+            <td colspan="6" class="py-12 text-center text-slate-500">
+              <div class="text-3xl mb-2">🔍</div>
+              <div class="text-sm">暂无符合条件的域名</div>
+              <div class="text-xs text-slate-600 mt-1">请尝试调整筛选词或导入历史数据</div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- 分页控件 -->
+    <div class="flex items-center justify-between text-xs text-slate-400 pt-2">
+      <div>共 <b class="text-slate-200">{{ totalDomains }}</b> 个域名 · 当前第 {{ page }} / {{ totalPages }} 页</div>
+      <div class="flex items-center space-x-1.5">
+        <button @click="page--; fetchDomains()" :disabled="page <= 1"
+                class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 transition">
+          上一页
+        </button>
+        <button @click="page++; fetchDomains()" :disabled="page >= totalPages"
+                class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 transition">
+          下一页
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 导入弹窗 Modal -->
+  <div v-if="openImportModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>📥</span> 批量导入历史可用域名
+        </h3>
+        <button @click="openImportModal = false" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+
+      <p class="text-xs text-slate-400">将扫描产生的 <code class="text-indigo-400">available_*.txt</code> 文件内容直接粘贴在下方，每行一个域名，系统会自动去重并推断模式：</p>
+
+      <textarea v-model="importText" rows="8" placeholder="例如：&#10;a-bw.com&#10;a-eh.com&#10;ai-x.com"
+                class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
+
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <label class="text-xs text-slate-400">归属模式:</label>
+          <select v-model="importMode" class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
+            <option value="">自动推断</option>
+            <option value="4letter-">4letter-</option>
+            <option value="4mix">4mix</option>
+            <option value="3letter-">3letter-</option>
+            <option value="5letter">5letter</option>
+          </select>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button @click="openImportModal = false" class="px-3 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
+          <button @click="submitImport" :disabled="importing || !importText.trim()"
+                  class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-medium rounded-lg shadow transition">
+            {{ importing ? '正在导入...' : '立即导入' }}
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 提示通知 -->
+  <div v-if="toastMsg" class="fixed bottom-6 right-6 z-50 bg-slate-800 text-white px-4 py-2.5 rounded-xl border border-slate-700 shadow-2xl text-xs font-medium flex items-center gap-2">
+    <span>💡</span>
+    <span>{{ toastMsg }}</span>
+  </div>
+
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+createApp({
+  setup() {
+    const loading = ref(false);
+    const toastMsg = ref('');
+    const stats = ref({});
+    const nodes = ref([]);
+    const domainList = ref([]);
+    const totalDomains = ref(0);
+    const page = ref(1);
+    const limit = ref(50);
+
+    const currentStatus = ref('available');
+    const currentMode = ref('all');
+    const searchKeyword = ref('');
+    const prefixFilter = ref('');
+    const suffixFilter = ref('');
+    const hasVowel = ref(false);
+    const excludeRare = ref(false);
+
+    const openImportModal = ref(false);
+    const importText = ref('');
+    const importMode = ref('');
+    const importing = ref(false);
+
+    const statusTabs = [
+      { id: 'available', label: '可用池', icon: '🎯' },
+      { id: 'starred', label: '我的收藏', icon: '⭐' },
+      { id: 'purchased', label: '已购买', icon: '🛒' },
+      { id: 'discarded', label: '垃圾桶', icon: '🗑️' },
+      { id: 'all', label: '全部状态', icon: '📁' }
+    ];
+
+    const modeOptions = [
+      { id: 'all', label: '全部模式' },
+      { id: '4letter-', label: '4letter-' },
+      { id: '4mix', label: '4mix' },
+      { id: '3letter-', label: '3letter-' },
+      { id: '3mix', label: '3mix' },
+      { id: '5letter', label: '5letter' }
+    ];
+
+    const showToast = (msg) => {
+      toastMsg.value = msg;
+      setTimeout(() => { toastMsg.value = ''; }, 2500);
+    };
+
+    const copyText = (txt) => {
+      navigator.clipboard.writeText(txt).then(() => {
+        showToast(`已复制: ${txt}`);
+      });
+    };
+
+    const formatTime = (ts) => {
+      if (!ts) return '-';
+      return ts.replace('T', ' ').split('.')[0];
+    };
+
+    // 格式化 6 节点列表展示 (即使某个节点未上报也展示占位)
+    const fixedNodeNames = ['Oracle-JP', 'Oracle-KR', 'Google-US', 'BL', 'LD', 'FN'];
+    const displayNodes = computed(() => {
+      const nodeMap = {};
+      nodes.value.forEach(n => { nodeMap[n.node_id] = n; });
+      return fixedNodeNames.map(name => {
+        if (nodeMap[name]) {
+          const item = nodeMap[name];
+          const pct = item.total > 0 ? ((item.scanned / item.total) * 100).toFixed(1) : 0;
+          let lastStr = '刚刚';
+          if (item.idle_sec > 60) lastStr = `${Math.floor(item.idle_sec / 60)}分钟前`;
+          else if (item.idle_sec > 5) lastStr = `${item.idle_sec}秒前`;
+          return { ...item, percent: pct, last_seen_str: lastStr };
+        }
+        return {
+          node_id: name,
+          mode: '',
+          shard: '',
+          scanned: 0,
+          total: 0,
+          percent: 0,
+          speed: 0,
+          available_count: 0,
+          status: 'offline',
+          last_seen_str: '未连接'
+        };
+      });
+    });
+
+    const totalPages = computed(() => Math.max(1, Math.ceil(totalDomains.value / limit.value)));
+
+    const fetchStats = async () => {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        if (data.code === 0) stats.value = data.data;
+      } catch (e) { console.error('fetchStats err', e); }
+    };
+
+    const fetchNodes = async () => {
+      try {
+        const res = await fetch('/api/nodes');
+        const data = await res.json();
+        if (data.code === 0) nodes.value = data.data;
+      } catch (e) { console.error('fetchNodes err', e); }
+    };
+
+    const fetchDomains = async () => {
+      loading.value = true;
+      try {
+        const params = new URLSearchParams({
+          status: currentStatus.value,
+          mode: currentMode.value,
+          page: page.value,
+          limit: limit.value,
+          q: searchKeyword.value,
+          prefix: prefixFilter.value,
+          suffix: suffixFilter.value,
+          has_vowel: hasVowel.value ? '1' : '0',
+          exclude_rare: excludeRare.value ? '1' : '0'
+        });
+        const res = await fetch(`/api/domains?${params.toString()}`);
+        const data = await res.json();
+        if (data.code === 0) {
+          domainList.value = data.data.list.map(d => ({ ...d, rechecking: false }));
+          totalDomains.value = data.data.total;
+        }
+      } catch (e) {
+        console.error('fetchDomains err', e);
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const toggleStatus = async (item, newStatus) => {
+      try {
+        const res = await fetch('/api/domain/status', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain: item.domain, status: newStatus })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          item.status = newStatus;
+          showToast(`已更新为 ${newStatus}`);
+          fetchStats();
+        }
+      } catch (e) {
+        showToast('更新失败');
+      }
+    };
+
+    const recheckDomain = async (item) => {
+      item.rechecking = true;
+      try {
+        const res = await fetch('/api/domain/recheck', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain: item.domain })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast(`${item.domain}: ${data.data.reason}`);
+          fetchDomains();
+          fetchStats();
+        }
+      } catch (e) {
+        showToast('复检请求失败');
+      } finally {
+        item.rechecking = false;
+      }
+    };
+
+    const submitImport = async () => {
+      if (!importText.value.trim()) return;
+      importing.value = true;
+      try {
+        const res = await fetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: importText.value,
+            mode: importMode.value,
+            node_id: 'web_import'
+          })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast(data.msg);
+          openImportModal.value = false;
+          importText.value = '';
+          fetchDomains();
+          fetchStats();
+        }
+      } catch (e) {
+        showToast('导入失败');
+      } finally {
+        importing.value = false;
+      }
+    };
+
+    const exportCurrent = () => {
+      const url = `/api/export?mode=${currentMode.value}&status=${currentStatus.value}`;
+      window.open(url, '_blank');
+    };
+
+    const refreshAll = () => {
+      fetchStats();
+      fetchNodes();
+      fetchDomains();
+    };
+
+    onMounted(() => {
+      refreshAll();
+      // 3 秒轮询心跳与统计
+      setInterval(() => {
+        fetchStats();
+        fetchNodes();
+      }, 3000);
+    });
+
+    return {
+      loading, toastMsg, stats, nodes, displayNodes, domainList, totalDomains,
+      page, limit, totalPages, currentStatus, currentMode, searchKeyword,
+      prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
+      openImportModal, importText, importMode, importing,
+      copyText, formatTime, fetchDomains, toggleStatus, recheckDomain,
+      submitImport, exportCurrent, refreshAll
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

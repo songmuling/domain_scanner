@@ -1,0 +1,14 @@
+services:
+  domain-hub:
+    build: .
+    image: domain-hub:latest
+    container_name: domain-hub
+    restart: unless-stopped
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./data:/app/data
+      - ./server.py:/app/server.py
+      - ./static:/app/static
+    environment:
+      - TZ=Asia/Shanghai
