@@ -1,0 +1,635 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+=============================================================================
+  Domain Scanner - 多节点分布式极速域名扫描工具
+  基于: DNS 极速初筛 + Verisign 官方权威 RDAP 协议终审 (404 即未注册)
+  特性: 纯 Python 3 标准库打造，零外部依赖，支持多机分片并发
+=============================================================================
+用法示例:
+  单机全量扫描:
+    python3 domain_scanner.py 3all
+    python3 domain_scanner.py 3mix
+    python3 domain_scanner.py 4letter
+    python3 domain_scanner.py 4letter-     # 4位带横线纯字母 (如 a-bc.com)
+    python3 domain_scanner.py 4mix-        # 4位带横线字母数字混合 (如 a-1b.com)
+    python3 domain_scanner.py 4num-        # 4位带横线纯数字 (如 8-88.com)
+
+  3 台机器分布式切分扫描 (直接传 1/3, 2/3, 3/3，分子从 1 开始):
+    机器 1 (US):  python3 domain_scanner.py 4letter- 1/3
+    机器 2 (JP):  python3 domain_scanner.py 4letter- 2/3
+    机器 3 (KR):  python3 domain_scanner.py 4letter- 3/3
+=============================================================================
+"""
+
+import sys
+import os
+import time
+import json
+import socket
+import ssl
+import string
+import argparse
+import itertools
+import urllib.request
+import urllib.error
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# 颜色控制
+GREEN = "\033[92m"
+RED = "\033[91m"
+YELLOW = "\033[93m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
+RESET = "\033[0m"
+
+# 脚本所在目录绝对路径，保证数据文件始终与脚本存放在同一目录
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+ALL_OUTPUT_FILE = os.path.join(SCRIPT_DIR, "available_domains.txt")
+
+ssl_context = ssl.create_default_context()
+
+def hub_post_async(hub_url, endpoint, payload):
+    """异步非阻塞上报数据到 Domain Hub 中心监控服务"""
+    if not hub_url or hub_url.lower() in ("none", "false", "0", "off", "no"):
+        return
+    def _worker():
+        try:
+            url = f"{hub_url.rstrip('/')}{endpoint}"
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={"Content-Type": "application/json", "User-Agent": "DomainScanner-Reporter/1.0"}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                pass
+        except Exception:
+            pass
+    threading.Thread(target=_worker, daemon=True).start()
+
+SUPPORTED_MODES = {
+    # 标准模式 (纯数字 / 纯字母 / 混合 / 全量)
+    "3all": "3位全量 (字母/数字全部组合: 46,656 个)",
+    "3mix": "3位混合 (必须包含字母和数字: 28,080 个)",
+    "3letter": "3位纯字母 (26^3 = 17,576 个)",
+    "3num": "3位纯数字 (10^3 = 1,000 个)",
+    "4all": "4位全量 (字母/数字全部组合: 1,679,616 个)",
+    "4mix": "4位混合 (必须包含字母和数字: 1,212,640 个)",
+    "4letter": "4位纯字母 (26^4 = 456,976 个)",
+    "4num": "4位纯数字 (10^4 = 10,000 个)",
+    "5num": "5位纯数字 (10^5 = 100,000 个)",
+    "5letter": "5位纯字母 (26^5 = 11,881,376 个)",
+    "5mix": "5位混合 (必须包含字母和数字: 48,484,800 个)",
+    "5all": "5位全量 (字母/数字全部组合: 60,466,176 个)",
+
+    # 带连字符 '-' 模式 (首尾无连字符、无连续双连字符)
+    "3num-": "3位带杠纯数字 (如 1-2.com: 100 个)",
+    "3letter-": "3位带杠纯字母 (如 a-b.com: 676 个)",
+    "3mix-": "3位带杠混合 (如 a-1.com: 520 个)",
+    "3all-": "3位带杠全量 (1,296 个)",
+    "4num-": "4位带杠纯数字 (如 8-88.com: 2,000 个)",
+    "4letter-": "4位带杠纯字母 (如 a-bc.com, ab-c.com: 35,152 个)",
+    "4mix-": "4位带杠混合 (必须包含字母和数字: 56,160 个)",
+    "4all-": "4位带杠全量 (93,312 个)",
+    "5num-": "5位带杠纯数字 (如 88-888.com: 31,000 个)",
+    "5letter-": "5位带杠纯字母 (如 my-app.com, go-fun.com: 1,388,504 个)",
+    "5mix-": "5位带杠混合 (3,666,000 个)",
+    "5all-": "5位带杠全量 (5,085,504 个)",
+}
+
+
+# ----------------- 字典与分片生成器 -----------------
+def is_mixed_chars(s):
+    """判断组合中是否必须同时包含字母和数字 (忽略连字符 '-')"""
+    has_l = any(c.isalpha() for c in s)
+    has_d = any(c.isdigit() for c in s)
+    return has_l and has_d
+
+def get_base_generator(mode, suffix="com"):
+    letters = string.ascii_lowercase
+    digits = string.digits
+    alphanumeric = letters + digits
+
+    has_hyphen = mode.endswith("-")
+    clean_mode = mode[:-1] if has_hyphen else mode
+
+    if len(clean_mode) >= 2 and clean_mode[0] in "345":
+        length = int(clean_mode[0])
+        kind = clean_mode[1:]
+        if kind == "letter":
+            chars = letters
+        elif kind == "num":
+            chars = digits
+        elif kind in ("all", "mix"):
+            chars = alphanumeric
+        else:
+            raise ValueError(f"未知模式: {mode}")
+
+        if not has_hyphen:
+            for p in itertools.product(chars, repeat=length):
+                name = "".join(p)
+                if kind == "mix" and not is_mixed_chars(name):
+                    continue
+                yield f"{name}.{suffix}"
+        else:
+            # 带连字符模式：严格遵守 ICANN 规则（首尾无 '-'，无连续 '--'）
+            if length == 3:
+                # 形态：X-X
+                for c1, c2 in itertools.product(chars, repeat=2):
+                    s = f"{c1}-{c2}"
+                    if kind == "mix" and not is_mixed_chars(s):
+                        continue
+                    yield f"{s}.{suffix}"
+            elif length == 4:
+                # 形态：X-XX, XX-X
+                for c1, c2, c3 in itertools.product(chars, repeat=3):
+                    for s in (f"{c1}-{c2}{c3}", f"{c1}{c2}-{c3}"):
+                        if kind == "mix" and not is_mixed_chars(s):
+                            continue
+                        yield f"{s}.{suffix}"
+            elif length == 5:
+                # 形态：X-XXX, XX-XX, XXX-X (单横线) 以及 X-X-X (双横线间隔)
+                for c1, c2, c3, c4 in itertools.product(chars, repeat=4):
+                    for s in (f"{c1}-{c2}{c3}{c4}", f"{c1}{c2}-{c3}{c4}", f"{c1}{c2}{c3}-{c4}"):
+                        if kind == "mix" and not is_mixed_chars(s):
+                            continue
+                        yield f"{s}.{suffix}"
+                for c1, c2, c3 in itertools.product(chars, repeat=3):
+                    s = f"{c1}-{c2}-{c3}"
+                    if kind == "mix" and not is_mixed_chars(s):
+                        continue
+                    yield f"{s}.{suffix}"
+    else:
+        raise ValueError(f"未知模式: {mode}")
+
+def get_mode_total(mode):
+    has_hyphen = mode.endswith("-")
+    clean_mode = mode[:-1] if has_hyphen else mode
+    length = int(clean_mode[0])
+    kind = clean_mode[1:]
+
+    def calc_hyphen(L, C):
+        if L == 3: return C**2
+        if L == 4: return 2 * C**3
+        if L == 5: return 3 * C**4 + C**3
+
+    if not has_hyphen:
+        if kind == "all": return 36**length
+        if kind == "letter": return 26**length
+        if kind == "num": return 10**length
+        if kind == "mix": return 36**length - 26**length - 10**length
+    else:
+        if kind == "all": return calc_hyphen(length, 36)
+        if kind == "letter": return calc_hyphen(length, 26)
+        if kind == "num": return calc_hyphen(length, 10)
+        if kind == "mix": return calc_hyphen(length, 36) - calc_hyphen(length, 26) - calc_hyphen(length, 10)
+    return 0
+
+def get_sharded_generator(mode, suffix, shard_idx, shard_total):
+    """根据分片编号均匀抽取属于本节点的域名 (shard_idx 为 0 到 shard_total-1)"""
+    base_gen = get_base_generator(mode, suffix)
+    for idx, domain in enumerate(base_gen):
+        if idx % shard_total == shard_idx:
+            yield domain
+
+
+# ----------------- 核心扫描引擎: DNS 初筛 + RDAP 终验 -----------------
+def dns_has_record(domain):
+    """步骤 1: DNS 初筛 (毫秒级过滤 85%~90% 已解析占用域名)"""
+    try:
+        socket.getaddrinfo(domain, 80, socket.AF_INET, socket.SOCK_STREAM)
+        return True  # 解析成功，必已注册
+    except socket.gaierror:
+        return False # 无解析，疑似未注册
+    except Exception:
+        return False
+
+def check_rdap_availability(domain):
+    """步骤 2: Verisign 官方权威 RDAP 终验"""
+    url = f"https://rdap.verisign.com/com/v1/domain/{domain}"
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Accept": "application/json"
+        }
+    )
+
+    retries = 3
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(req, timeout=5, context=ssl_context) as resp:
+                if resp.status == 200:
+                    return False  # 已注册
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                return True       # 404 Not Found -> 权威确认未注册！
+            elif e.code == 429:
+                # 触发软限流，指数休眠退避
+                time.sleep(2 * (attempt + 1))
+                continue
+            else:
+                return False
+        except Exception:
+            time.sleep(1)
+            continue
+
+    return False
+
+# ICANN / IETF / IGO 官方政策永久保留字 (虽然 RDAP 返回 404，但 ICANN 禁止向公众开放注册)
+ICANN_RESERVED_PREFIXES = {
+    "gnso", "iesg", "imso", "example", "nic", "whois", "w3c", "iana", "icann", "internic", "rfc-editor"
+}
+
+def check_single_domain(domain):
+    prefix = domain.split(".")[0].lower()
+    if prefix in ICANN_RESERVED_PREFIXES:
+        return domain, False, "ICANN 官方政策保留字 (非卖品，禁止注册)"
+
+    # 1. DNS 先行初筛
+    if dns_has_record(domain):
+        return domain, False, "DNS解析已存在"
+
+    # 2. 权威 RDAP 终审
+    is_available = check_rdap_availability(domain)
+    if is_available:
+        return domain, True, "RDAP 权威确认 404 未注册"
+    else:
+        return domain, False, "RDAP 确认已占用"
+
+
+# ----------------- 进度断点存盘 -----------------
+def get_checkpoint_path(mode, shard_str):
+    clean_shard = shard_str.replace("/", "_")
+    return os.path.join(SCRIPT_DIR, f"checkpoint_{mode}_{clean_shard}.json")
+
+def load_checkpoint(ckpt_path):
+    if os.path.exists(ckpt_path):
+        try:
+            with open(ckpt_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return (
+                    data.get("last_domain", ""),
+                    data.get("checked_count", 0),
+                    data.get("found_count", 0),
+                    data.get("found_domains", [])
+                )
+        except Exception:
+            pass
+    return "", 0, 0, []
+
+def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_domains):
+    try:
+        with open(ckpt_path, "w", encoding="utf-8") as f:
+            json.dump({
+                "last_domain": last_domain,
+                "checked_count": checked_count,
+                "found_count": found_count,
+                "found_domains": found_domains,
+                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+            }, f, indent=2)
+    except Exception:
+        pass
+
+def save_summary_report(report_path, mode, suffix, shard_num, shard_total, checked_count, node_total, found_domains, start_time, end_time, mode_file):
+    elapsed_sec = int(end_time - start_time)
+    hours, remainder = divmod(elapsed_sec, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    time_str = f"{hours}小时{minutes}分{seconds}秒" if hours else f"{minutes}分{seconds}秒"
+    qps = checked_count / elapsed_sec if elapsed_sec > 0 else 0
+
+    lines = [
+        "=" * 70,
+        "              ⚡ 域名扫描任务总结报告 (Domain Scan Report)",
+        "=" * 70,
+        f"扫描模式: {mode} (.{suffix}) - {SUPPORTED_MODES.get(mode, '')}",
+        f"分布式分片: 节点 {shard_num}/{shard_total}" if shard_total > 1 else "分布式分片: 单机全量扫描",
+        f"开始时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(start_time))}",
+        f"完成时间: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(end_time))}",
+        f"扫描耗时: {time_str} (平均 {qps:.1f} 个/秒)",
+        f"已检进度: {checked_count:,} / {node_total:,} ({(checked_count / node_total * 100) if node_total else 100:.2f}%)",
+        f"发现可用: {len(found_domains)} 个",
+        "-" * 70,
+        "【可用域名详细清单】:",
+    ]
+    if found_domains:
+        for idx, (dom, reason) in enumerate(found_domains, 1):
+            lines.append(f"  {idx:>3}. {dom:<25} -> {reason}")
+    else:
+        lines.append("  (本次扫描区间内暂未发现未注册域名)")
+
+    lines.extend([
+        "=" * 70,
+        "【说明与后续操作建议】:",
+        f"1. 本模式专属清单: {os.path.basename(mode_file)} (仅含 {mode} 纯域名，直接全选复制批量注册)",
+        "2. 全局汇总总清单: available_domains.txt (包含历史所有模式发现的域名，不重复)",
+        "3. 推荐平价无溢价注册商 (成本价原价注册，防被宰):",
+        "   - Cloudflare Registrar: https://www.cloudflare.com/products/registrar/",
+        "   - Porkbun: https://porkbun.com (支持支付宝，批量查询方便)",
+        "   - 阿里云万网批量注册: https://wanwang.aliyun.com/domain/batchdomain/",
+        "=" * 70,
+    ])
+
+    report_content = "\n".join(lines) + "\n"
+    try:
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_content)
+    except Exception as e:
+        print(f"{RED}[!] 报告写入失败: {e}{RESET}")
+    return report_content
+
+
+# ----------------- 扫描主循环 -----------------
+def main():
+    parser = argparse.ArgumentParser(
+        description="多节点分布式域名极速扫描工具",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""常用示例:
+  单机扫描:
+    python3 domain_scanner.py 3all
+    python3 domain_scanner.py 3mix
+    python3 domain_scanner.py 4letter
+    python3 domain_scanner.py 4letter-     # 4位带横线纯字母 (35,152 个，捡漏黄金区)
+    python3 domain_scanner.py 4mix-        # 4位带横线混合 (56,160 个)
+    python3 domain_scanner.py 4num-        # 4位带横线纯数字 (2,000 个)
+
+  多节点分布式扫描 (分片直接写在后面，分子从 1 开始):
+    机器 1:  python3 domain_scanner.py 4letter- 1/3
+    机器 2:  python3 domain_scanner.py 4letter- 2/3
+    机器 3:  python3 domain_scanner.py 4letter- 3/3
+    指定线程: python3 domain_scanner.py 4letter- 1/4 --threads 35
+"""
+    )
+
+    parser.add_argument("arg1", nargs="?", default="3all",
+                        help="扫描模式 (如 3all, 3mix, 4letter-, 4mix- 等) 或分片参数 (如 1/3)")
+    parser.add_argument("arg2", nargs="?", default=None,
+                        help="分片参数 (如 1/3, 2/3, 3/3)，单机可省略")
+    parser.add_argument("--shard", default=None,
+                        help="分片参数 (兼容旧写法，如 --shard 1/3)")
+    parser.add_argument("--suffix", default="com", help="域名后缀 (默认: com)")
+    parser.add_argument("--threads", type=int, default=20, help="并发线程数 (默认: 20)")
+    parser.add_argument("--verbose", action="store_true", help="打印所有已占用域名详情")
+    parser.add_argument("--hub", default=os.environ.get("DOMAIN_HUB_URL", "http://192.168.200.12:8088"),
+                        help="Domain Hub 中心监控服务 URL (默认: http://192.168.200.12:8088, 设为 'none' 禁用)")
+    parser.add_argument("--node", default=os.environ.get("NODE_ID", ""),
+                        help="当前节点名称 (默认自动根据主机名推断)")
+
+    args = parser.parse_args()
+
+    # 智能推断当前节点 ID
+    node_id = args.node
+    if not node_id:
+        hname = socket.gethostname().lower()
+        if "jp" in hname:
+            node_id = "Oracle-JP"
+        elif "kr" in hname:
+            node_id = "Oracle-KR"
+        elif "us" in hname:
+            node_id = "Google-US"
+        elif "bl" in hname:
+            node_id = "BL"
+        elif "ld" in hname:
+            node_id = "LD"
+        elif "fn" in hname or "nas" in hname:
+            node_id = "FN"
+        else:
+            node_id = socket.gethostname()
+
+    # 智能解析模式与分片
+    mode = "3all"
+    raw_shard = "1/1"
+
+    if args.shard:
+        raw_shard = args.shard
+
+    if args.arg1:
+        if "/" in args.arg1:
+            raw_shard = args.arg1
+        else:
+            mode = args.arg1.lower()
+
+    if args.arg2:
+        if "/" in args.arg2:
+            raw_shard = args.arg2
+        else:
+            mode = args.arg2.lower()
+
+    # 别名映射容错 (支持 4hyphen / 4letter_ 等写法)
+    aliases = {
+        "3hyphen": "3letter-",
+        "4hyphen": "4letter-",
+        "5hyphen": "5letter-",
+        "3num_": "3num-",
+        "3letter_": "3letter-",
+        "3mix_": "3mix-",
+        "4num_": "4num-",
+        "4letter_": "4letter-",
+        "4mix_": "4mix-",
+        "5num_": "5num-",
+        "5letter_": "5letter-",
+        "5mix_": "5mix-",
+    }
+    mode = aliases.get(mode, mode)
+
+    if mode not in SUPPORTED_MODES:
+        print(f"{RED}[!] 未知模式 '{mode}'。支持的模式列表:{RESET}")
+        for m, desc in SUPPORTED_MODES.items():
+            print(f"  - {YELLOW}{m:<10}{RESET}: {desc}")
+        sys.exit(1)
+
+    # 解析分片信息 (分子从 1 开始，例如 1/3, 2/3, 3/3)
+    try:
+        parts = raw_shard.strip().split("/")
+        shard_num = int(parts[0])
+        shard_total = int(parts[1])
+        if shard_total < 1:
+            raise ValueError("分片总数必须 >= 1")
+        if shard_num == 0:
+            raise ValueError(f"分片编号分子现已调整为从 1 开始！对于 {shard_total} 台机器，请使用 1/{shard_total} 到 {shard_total}/{shard_total}")
+        if not (1 <= shard_num <= shard_total):
+            raise ValueError(f"分片编号分子必须在 1 到 {shard_total} 之间")
+        shard_idx = shard_num - 1
+    except Exception as e:
+        print(f"{RED}[!] 分片参数错误: {e}{RESET}")
+        print(f"{YELLOW}正确格式: [编号]/[总数]，且编号从 1 开始。例如 3 台机器请分别输入: 1/3、2/3、3/3 (单机直接运行或输入 1/1){RESET}")
+        sys.exit(1)
+
+    total_all = get_mode_total(mode)
+    node_total = total_all // shard_total
+
+    canonical_shard = f"{shard_num}/{shard_total}"
+
+    mode_output_file = os.path.join(SCRIPT_DIR, f"available_{mode}.txt")
+    all_output_file = ALL_OUTPUT_FILE
+
+    seen_mode_domains = set()
+    if os.path.exists(mode_output_file):
+        try:
+            with open(mode_output_file, "r", encoding="utf-8") as f:
+                seen_mode_domains = {line.strip() for line in f if line.strip()}
+        except Exception:
+            pass
+
+    seen_all_domains = set()
+    if os.path.exists(all_output_file):
+        try:
+            with open(all_output_file, "r", encoding="utf-8") as f:
+                seen_all_domains = {line.strip() for line in f if line.strip()}
+        except Exception:
+            pass
+
+    def record_available_domain(dom, reason="404 未注册"):
+        if dom not in seen_mode_domains:
+            seen_mode_domains.add(dom)
+            with open(mode_output_file, "a", encoding="utf-8") as f:
+                f.write(f"{dom}\n")
+        if dom not in seen_all_domains:
+            seen_all_domains.add(dom)
+            with open(all_output_file, "a", encoding="utf-8") as f:
+                f.write(f"{dom}\n")
+        # 实时异步上报至 Domain Hub
+        hub_post_async(args.hub, "/api/report", {
+            "domain": dom,
+            "mode": mode,
+            "node_id": node_id,
+            "reason": reason
+        })
+
+    print(f"{CYAN}{BOLD}===================================================={RESET}")
+    print(f" {BOLD}域名极速扫描器 (DNS初筛 + Verisign RDAP权威验证){RESET}")
+    print(f"{CYAN}{BOLD}===================================================={RESET}")
+    print(f"扫描模式: {YELLOW}{BOLD}{mode}{RESET} (.{args.suffix}) - {SUPPORTED_MODES[mode]}")
+    print(f"全库总量: {total_all:,} 个")
+    if shard_total > 1:
+        print(f"分布式分片: {GREEN}节点 {shard_num}/{shard_total}{RESET} (本节点负责约: {node_total:,} 个)")
+    else:
+        print(f"扫描模式: 单机全量扫描")
+    print(f"并发线程: {args.threads} 线程")
+    if args.hub and args.hub.lower() not in ("none", "false", "0"):
+        print(f"中心监控: {GREEN}{args.hub}{RESET} (节点: {YELLOW}{node_id}{RESET})")
+    print(f"模式专属清单: {mode_output_file}")
+    print(f"全局汇总清单: {all_output_file}")
+    print(f"{CYAN}----------------------------------------------------{RESET}")
+
+    ckpt_file = get_checkpoint_path(mode, canonical_shard)
+    last_checkpoint, checked_count, found_count, found_domains = load_checkpoint(ckpt_file)
+    if last_checkpoint:
+        print(f"{YELLOW}[*] 检测到断点记录，已累计扫描 {checked_count:,} 个，即将从 {last_checkpoint} 续扫...{RESET}")
+
+    generator = get_sharded_generator(mode, args.suffix, shard_idx, shard_total)
+    skipping = bool(last_checkpoint)
+
+    start_time = time.time()
+    last_hb_time = start_time
+    last_hb_count = checked_count
+
+    # 初始心跳
+    hub_post_async(args.hub, "/api/heartbeat", {
+        "node_id": node_id,
+        "mode": mode,
+        "shard": canonical_shard,
+        "scanned": checked_count,
+        "total": node_total,
+        "speed": 0.0,
+        "available": found_count,
+        "status": "running"
+    })
+
+    batch = []
+    try:
+        with ThreadPoolExecutor(max_workers=args.threads) as executor:
+            for domain in generator:
+                if skipping:
+                    if domain == last_checkpoint:
+                        skipping = False
+                    continue
+
+                batch.append(domain)
+                if len(batch) >= args.threads * 2:
+                    futures = [executor.submit(check_single_domain, d) for d in batch]
+                    for fut in as_completed(futures):
+                        dom, is_free, reason = fut.result()
+                        checked_count += 1
+                        if is_free:
+                            found_count += 1
+                            found_domains.append((dom, reason))
+                            msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
+                            print(msg)
+                            record_available_domain(dom, reason)
+                        else:
+                            if args.verbose:
+                                print(f"{RED}[占用]{RESET} {dom}")
+
+                    last_dom = batch[-1]
+                    save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
+                    pct = (checked_count / node_total * 100) if node_total else 0
+                    prefix_tag = f"[分片 {shard_num}/{shard_total}] " if shard_total > 1 else ""
+                    print(f"-> {prefix_tag}进度: {checked_count:,}/{node_total:,} ({pct:.2f}%) | 发现可用: {found_count} 个", end="\r")
+
+                    # 周期性上报心跳 (3秒一次)
+                    now_t = time.time()
+                    if now_t - last_hb_time >= 3.0:
+                        cur_speed = (checked_count - last_hb_count) / (now_t - last_hb_time) if (now_t - last_hb_time) > 0 else 0
+                        hub_post_async(args.hub, "/api/heartbeat", {
+                            "node_id": node_id,
+                            "mode": mode,
+                            "shard": canonical_shard,
+                            "scanned": checked_count,
+                            "total": node_total,
+                            "speed": round(cur_speed, 1),
+                            "available": found_count,
+                            "status": "running"
+                        })
+                        last_hb_time = now_t
+                        last_hb_count = checked_count
+
+                    batch = []
+
+            # 处理剩余尾部
+            if batch:
+                futures = [executor.submit(check_single_domain, d) for d in batch]
+                for fut in as_completed(futures):
+                    dom, is_free, reason = fut.result()
+                    checked_count += 1
+                    if is_free:
+                        found_count += 1
+                        found_domains.append((dom, reason))
+                        msg = f"\n{GREEN}{BOLD}[√ 发现未注册]{RESET} {dom} -> {reason}"
+                        print(msg)
+                        record_available_domain(dom, reason)
+                last_dom = batch[-1]
+                save_checkpoint(ckpt_file, last_dom, checked_count, found_count, found_domains)
+
+    except KeyboardInterrupt:
+        print(f"\n\n{YELLOW}[!] 扫描被用户中断 (Ctrl+C)，当前进度已安全保存。{RESET}")
+    finally:
+        # 结束时发送最终心跳
+        hub_post_async(args.hub, "/api/heartbeat", {
+            "node_id": node_id,
+            "mode": mode,
+            "shard": canonical_shard,
+            "scanned": checked_count,
+            "total": node_total,
+            "speed": 0.0,
+            "available": found_count,
+            "status": "completed" if (node_total and checked_count >= node_total) else "paused"
+        })
+        end_time = time.time()
+        clean_shard = canonical_shard.replace('/', '_')
+        report_file = os.path.join(SCRIPT_DIR, f"scan_report_{mode}_{clean_shard}.txt")
+        save_summary_report(
+            report_file, mode, args.suffix, shard_num, shard_total,
+            checked_count, node_total, found_domains, start_time, end_time, mode_output_file
+        )
+        print(f"\n{GREEN}{BOLD}===================================================={RESET}")
+        print(f" 扫描任务已收尾！本节点已完成 {checked_count:,} 个，发现可用域名 {len(found_domains)} 个")
+        print(f"{GREEN}{BOLD}===================================================={RESET}")
+        print(f"📋 模式专属清单: {mode_output_file} (纯 {mode} 域名，可直接全选批量注册)")
+        print(f"📁 全局汇总总表: {all_output_file} (跨模式自动去重)")
+        print(f"📄 详细总结报告: {report_file}")
+
+if __name__ == "__main__":
+    main()

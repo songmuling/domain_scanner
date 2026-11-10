@@ -3,9 +3,29 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Output and runtime logs
+# Database files & SQLite runtime journals
+*.db
+*.db-wal
+*.db-shm
+**/data/*.db*
+domain_hub/data/
+data/
+
+# Environment files and credentials
+.env
+*.env
+token.txt
+tokens.json
+secrets.json
+
+# Output lists and runtime reports
+available_*.txt
 available_domains.txt
+scan_report_*.txt
 scan.log
+*.log
+
+# Checkpoints & runtime states
 checkpoint*.json
 config.json
 
@@ -13,3 +33,5 @@ config.json
 .DS_Store
 *.swp
 *.swo
+.idea/
+.vscode/

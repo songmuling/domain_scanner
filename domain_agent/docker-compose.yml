@@ -1,0 +1,12 @@
+services:
+  domain-agent:
+    build: .
+    image: domain-agent:latest
+    container_name: domain-agent
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - TZ=Asia/Shanghai
+      - HUB_URL=http://192.168.200.12:8088
+      - HUB_TOKEN=${HUB_TOKEN:-}
+      - NODE_ID=${NODE_ID:-}

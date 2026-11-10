@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Domain Radar - 域名监控中心</title>
-  <!-- Tailwind CSS & Font -->
+  <title>Domain Swarm - 分布式域名扫描控制中心</title>
+  <!-- Tailwind CSS & Vue 3 -->
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <script>
@@ -32,55 +32,88 @@
 
 <div id="app" v-cloak class="max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
 
-  <!-- 顶部导航与总状态 -->
+  <!-- 顶部导航 -->
   <header class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-slate-800">
     <div class="flex items-center space-x-3">
       <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-violet-500 flex items-center justify-center shadow-lg shadow-indigo-500/20 text-white font-black text-xl">
-        🌐
+        ⚡
       </div>
       <div>
         <div class="flex items-center gap-2">
-          <h1 class="text-xl font-bold tracking-tight text-white">Domain Radar 控制中心</h1>
+          <h1 class="text-xl font-bold tracking-tight text-white">Domain Swarm 控制中心</h1>
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-950/80 text-indigo-300 border border-indigo-800/50">
+            Nezha Master-Agent 架构
+          </span>
           <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/50">
-            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>实时监控中
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>实时集群中
           </span>
         </div>
-        <p class="text-xs text-slate-400 mt-0.5">多节点分布式扫描 · 权威RDAP校验 · 毫秒级智能筛选</p>
+        <p class="text-xs text-slate-400 mt-0.5">多机任务分发 · 自动分片调度 · 资产入库与在线复检</p>
       </div>
     </div>
 
     <!-- 顶部操作区 -->
-    <div class="flex items-center space-x-2">
-      <button @click="openImportModal = true" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-        📥 导入历史TXT
+    <div class="flex items-center flex-wrap gap-2">
+      <button @click="openDispatchModal = true" class="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-lg shadow-md shadow-indigo-600/20 transition flex items-center gap-1.5">
+        🚀 新建扫描任务
       </button>
-      <button @click="exportCurrent" class="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium rounded-lg shadow-sm transition flex items-center gap-1.5">
-        📤 导出结果
+      <button @click="openTokenModal = true" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        🔑 接入 Token
       </button>
-      <button @click="refreshAll" :disabled="loading" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
-        <span :class="{'animate-spin': loading}">🔄</span>
+      <button @click="openImportModal = true" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        📥 导入TXT
+      </button>
+      <button @click="exportCurrent" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5">
+        📤 导出
+      </button>
+      <button @click="refreshAll" :disabled="loading" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-lg border border-slate-700 transition">
+        <span :class="{'animate-spin inline-block': loading}">🔄</span>
       </button>
     </div>
   </header>
 
-  <!-- 4 个关键数据指标 -->
+  <!-- 当前活跃任务横幅 (若有任务正在运行) -->
+  <div v-if="stats.active_task" class="bg-gradient-to-r from-indigo-950/60 via-slate-900 to-slate-900 border border-indigo-800/60 p-4 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-lg">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl animate-spin inline-block">⚙️</span>
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-xs font-semibold text-indigo-300 uppercase">当前全网正在扫描:</span>
+          <span class="px-2 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono">
+            {{ stats.active_task.mode }}
+          </span>
+          <span class="text-[11px] text-slate-400">任务ID: {{ stats.active_task.task_id }}</span>
+        </div>
+        <p class="text-xs text-slate-400 mt-0.5">
+          参与节点集群正在实时切片扫描，综合速度: <b class="text-emerald-400">{{ stats.total_speed }} 个/秒</b>
+        </p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button @click="stopClusterTask(stats.active_task.task_id)" class="px-3.5 py-1.5 bg-red-600/80 hover:bg-red-500 text-white text-xs font-medium rounded-lg border border-red-500 transition shadow flex items-center gap-1.5">
+        ⏹️ 停止此集群任务
+      </button>
+    </div>
+  </div>
+
+  <!-- 4 个核心数据看板 -->
   <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl relative overflow-hidden">
-      <div class="text-xs font-medium text-slate-400">当前可用域名总数</div>
+    <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
+      <div class="text-xs font-medium text-slate-400">可用域名总库存</div>
       <div class="text-2xl font-black text-white mt-1">{{ stats.total_available?.toLocaleString() || 0 }}</div>
       <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
-        <span>今日新发现:</span>
+        <span>今日发现:</span>
         <span class="font-bold">+{{ stats.today_found || 0 }}</span>
       </div>
     </div>
 
     <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
-      <div class="text-xs font-medium text-slate-400">全网实时总扫速</div>
+      <div class="text-xs font-medium text-slate-400">集群实时总扫速</div>
       <div class="text-2xl font-black text-indigo-400 mt-1">
         {{ stats.total_speed || 0 }} <span class="text-xs text-slate-400 font-normal">个/秒</span>
       </div>
       <div class="text-[11px] text-slate-400 mt-1">
-        活跃节点: <span class="text-white font-semibold">{{ stats.active_nodes || 0 }}</span> / {{ nodes.length || 6 }}
+        活跃节点: <span class="text-white font-semibold">{{ stats.active_nodes || 0 }}</span> / {{ nodes.length }}
       </div>
     </div>
 
@@ -93,71 +126,90 @@
     </div>
 
     <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
-      <div class="text-xs font-medium text-slate-400">热门分类分布</div>
+      <div class="text-xs font-medium text-slate-400">模式资产分布</div>
       <div class="text-xs text-slate-300 mt-2 flex flex-wrap gap-1.5">
         <span v-for="(cnt, m) in stats.mode_stats" :key="m" class="px-1.5 py-0.5 bg-slate-800 rounded border border-slate-700 text-[10px]">
           {{ m }}: <b class="text-white">{{ cnt }}</b>
         </span>
-        <span v-if="!stats.mode_stats || Object.keys(stats.mode_stats).length === 0" class="text-slate-500 text-xs">暂无数据</span>
       </div>
     </div>
   </div>
 
-  <!-- 6 节点分布式雷达卡片 -->
+  <!-- 节点实时雷达监控区 (Agent Nodes) -->
   <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
     <div class="flex items-center justify-between mb-3.5">
       <div class="flex items-center gap-2">
         <span class="text-base">🖥️</span>
-        <h2 class="text-sm font-semibold text-white tracking-wide">扫描节点实时雷达 (6 节点分布式)</h2>
+        <h2 class="text-sm font-semibold text-white tracking-wide">已接入 Agent 节点状态 (自动发现与心跳轮询)</h2>
       </div>
-      <span class="text-xs text-slate-400">心跳自动轮询 3s</span>
+      <span class="text-xs text-slate-400">心跳周期: 2.5s</span>
     </div>
 
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-      <div v-for="node in displayNodes" :key="node.node_id"
+      <div v-for="node in nodes" :key="node.node_id"
            class="bg-[#131b2e] border border-slate-800 rounded-xl p-3.5 hover:border-slate-700 transition">
         <!-- 节点头部 -->
         <div class="flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span class="relative flex h-2 w-2">
               <span v-if="node.status === 'running'" class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2" :class="node.status === 'running' ? 'bg-emerald-400' : 'bg-slate-500'"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2"
+                    :class="node.status === 'running' ? 'bg-emerald-400' : (node.status === 'idle' ? 'bg-amber-400' : 'bg-slate-500')"></span>
             </span>
             <span class="font-bold text-sm text-slate-200">{{ node.node_id }}</span>
           </div>
-          <span v-if="node.mode" class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono">
-            {{ node.mode }} <span v-if="node.shard">({{ node.shard }})</span>
-          </span>
-          <span v-else class="text-[10px] text-slate-500">待命空闲</span>
+          <div class="flex items-center gap-1.5">
+            <span v-if="node.status === 'running'" class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono">
+              {{ node.mode }} <span v-if="node.shard">({{ node.shard }})</span>
+            </span>
+            <span v-else-if="node.status === 'idle'" class="px-2 py-0.5 text-[10px] rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/40">
+              待命中
+            </span>
+            <span v-else class="px-2 py-0.5 text-[10px] rounded-full bg-slate-800 text-slate-500 border border-slate-700/60">
+              离线
+            </span>
+            <button @click="deleteNode(node.node_id)" class="text-slate-500 hover:text-red-400 text-xs ml-1" title="清理节点记录">✕</button>
+          </div>
+        </div>
+
+        <!-- 节点 IP 与系统 -->
+        <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between font-mono">
+          <span>IP: {{ node.ip || '内网' }}</span>
+          <span>v{{ node.agent_version || '1.0' }}</span>
         </div>
 
         <!-- 进度条 -->
         <div class="mt-2.5">
           <div class="flex justify-between text-[11px] text-slate-400 mb-1">
-            <span>进度: {{ node.percent }}%</span>
+            <span>进度: {{ getPercent(node) }}%</span>
             <span>{{ node.scanned?.toLocaleString() || 0 }} / {{ node.total?.toLocaleString() || 0 }}</span>
           </div>
           <div class="w-full bg-slate-800/80 rounded-full h-1.5 overflow-hidden">
             <div class="bg-gradient-to-r from-indigo-500 to-violet-500 h-1.5 rounded-full transition-all duration-500"
-                 :style="{ width: node.percent + '%' }"></div>
+                 :style="{ width: getPercent(node) + '%' }"></div>
           </div>
         </div>
 
         <!-- 底部速率与命中 -->
         <div class="mt-2.5 pt-2 border-t border-slate-800/60 flex items-center justify-between text-[11px]">
           <span class="text-slate-400">⚡ 速率: <b class="text-slate-200">{{ node.speed || 0 }}/s</b></span>
-          <span class="text-emerald-400">🎯 命中: <b>{{ node.available_count || 0 }}</b></span>
-          <span class="text-[10px] text-slate-500">{{ node.last_seen_str }}</span>
+          <span class="text-emerald-400">🎯 发现: <b>{{ node.available_count || 0 }}</b></span>
+          <span class="text-[10px] text-slate-500">{{ formatIdle(node.idle_sec) }}</span>
         </div>
+      </div>
+
+      <!-- 如果无节点接入 -->
+      <div v-if="nodes.length === 0" class="col-span-full py-8 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">
+        <p class="text-sm">暂无 Agent 节点接入</p>
+        <p class="text-xs mt-1 text-slate-600">点击右上角“🔑 接入 Token”获取启动命令并部署 Agent</p>
       </div>
     </div>
   </section>
 
-  <!-- 域名探索与智能淘金主控制台 -->
+  <!-- 域名探索与资产库控制台 -->
   <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5 space-y-4">
     <!-- 标签栏与模式切换 -->
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
-      <!-- 状态 Tabs -->
       <div class="flex items-center space-x-1 bg-slate-950/60 p-1 rounded-xl border border-slate-800">
         <button v-for="tab in statusTabs" :key="tab.id"
                 @click="currentStatus = tab.id; page = 1; fetchDomains()"
@@ -168,7 +220,6 @@
         </button>
       </div>
 
-      <!-- 分类模式 Tabs -->
       <div class="flex items-center space-x-1.5 overflow-x-auto text-xs py-1">
         <button v-for="m in modeOptions" :key="m.id"
                 @click="currentMode = m.id; page = 1; fetchDomains()"
@@ -181,14 +232,12 @@
 
     <!-- 筛选工具栏 -->
     <div class="grid grid-cols-1 md:grid-cols-12 gap-3 items-center">
-      <!-- 搜索框 -->
       <div class="md:col-span-4 relative">
         <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()"
                placeholder="🔍 搜索域名、前缀、后缀 (回车查询)..."
                class="w-full bg-slate-950/80 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
       </div>
 
-      <!-- 快速前缀/后缀 -->
       <div class="md:col-span-3 flex gap-2">
         <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()"
                placeholder="前缀如: ai-, go-"
@@ -198,7 +247,6 @@
                class="w-1/2 bg-slate-950/80 border border-slate-800 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
       </div>
 
-      <!-- 专属特征过滤开关 -->
       <div class="md:col-span-5 flex flex-wrap items-center justify-end gap-2 text-xs">
         <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
                 :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300' : 'bg-slate-800/50 border-slate-800 text-slate-400 hover:bg-slate-800'"
@@ -229,7 +277,6 @@
         </thead>
         <tbody class="divide-y divide-slate-800/60 text-xs">
           <tr v-for="item in domainList" :key="item.domain" class="hover:bg-slate-800/30 transition group">
-            <!-- 域名名称 -->
             <td class="py-3 px-4">
               <div class="flex items-center gap-2">
                 <span @click="copyText(item.domain)"
@@ -243,24 +290,20 @@
               </div>
             </td>
 
-            <!-- 模式标签 -->
             <td class="py-3 px-3">
               <span class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700/60 text-[10px] font-mono text-slate-300">
                 {{ item.mode || '未知' }}
               </span>
             </td>
 
-            <!-- 节点 -->
             <td class="py-3 px-3 text-slate-400 font-mono text-[11px]">
               {{ item.node_id || 'manual' }}
             </td>
 
-            <!-- 时间 -->
             <td class="py-3 px-3 text-slate-400 text-[11px]">
               {{ formatTime(item.created_at) }}
             </td>
 
-            <!-- 一键直达购买链接 -->
             <td class="py-3 px-4">
               <div class="flex items-center justify-center gap-1.5">
                 <a :href="'https://www.dynadot.com/domain/search.html?domain=' + item.domain" target="_blank"
@@ -278,28 +321,23 @@
               </div>
             </td>
 
-            <!-- 状态操作 -->
             <td class="py-3 px-4 text-right">
               <div class="flex items-center justify-end gap-1.5">
-                <!-- 复检 -->
                 <button @click="recheckDomain(item)" :disabled="item.rechecking"
                         title="在线复检 RDAP"
                         class="p-1 text-slate-400 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
                   <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
                 </button>
-                <!-- 收藏 -->
                 <button @click="toggleStatus(item, item.status === 'starred' ? 'available' : 'starred')"
                         :title="item.status === 'starred' ? '取消收藏' : '收藏'"
                         class="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition">
                   {{ item.status === 'starred' ? '⭐' : '☆' }}
                 </button>
-                <!-- 标为已购 -->
                 <button @click="toggleStatus(item, item.status === 'purchased' ? 'available' : 'purchased')"
                         title="标记为已购"
                         class="p-1 text-slate-400 hover:text-emerald-400 rounded hover:bg-slate-800 transition text-xs">
                   🛒
                 </button>
-                <!-- 丢入垃圾桶 -->
                 <button @click="toggleStatus(item, 'discarded')"
                         title="移至垃圾桶"
                         class="p-1 text-slate-400 hover:text-red-400 rounded hover:bg-slate-800 transition text-xs">
@@ -309,19 +347,17 @@
             </td>
           </tr>
 
-          <!-- 空状态 -->
           <tr v-if="domainList.length === 0">
             <td colspan="6" class="py-12 text-center text-slate-500">
               <div class="text-3xl mb-2">🔍</div>
               <div class="text-sm">暂无符合条件的域名</div>
-              <div class="text-xs text-slate-600 mt-1">请尝试调整筛选词或导入历史数据</div>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <!-- 分页控件 -->
+    <!-- 分页 -->
     <div class="flex items-center justify-between text-xs text-slate-400 pt-2">
       <div>共 <b class="text-slate-200">{{ totalDomains }}</b> 个域名 · 当前第 {{ page }} / {{ totalPages }} 页</div>
       <div class="flex items-center space-x-1.5">
@@ -337,7 +373,128 @@
     </div>
   </section>
 
-  <!-- 导入弹窗 Modal -->
+  <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher) -->
+  <div v-if="openDispatchModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>🚀</span> 新建并分发集群扫描任务
+        </h3>
+        <button @click="openDispatchModal = false" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+
+      <div class="space-y-3.5 text-xs">
+        <div>
+          <label class="block text-slate-300 font-medium mb-1">扫描模式 (选择你想扫的字典类型):</label>
+          <select v-model="dispatchForm.mode" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+            <option value="4letter-">4letter- (4位带横杠字母: 3.5万个，极客捡漏黄金区 ⭐)</option>
+            <option value="4mix-">4mix- (4位带横杠字母数字混合: 5.6万个)</option>
+            <option value="4num-">4num- (4位带横杠纯数字: 2,000个)</option>
+            <option value="3letter-">3letter- (3位带横杠字母: 676个)</option>
+            <option value="3mix-">3mix- (3位带横杠混合: 520个)</option>
+            <option value="4mix">4mix (4位字母数字混合: 121万个)</option>
+            <option value="5letter">5letter (5位纯字母: 1188万个)</option>
+            <option value="5num-">5num- (5位带横杠纯数字: 3万个)</option>
+            <option value="5letter-">5letter- (5位带横杠纯字母: 138万个)</option>
+          </select>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">单节点并发线程数:</label>
+            <input v-model.number="dispatchForm.threads" type="number" min="5" max="60"
+                   class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+          </div>
+          <div>
+            <label class="block text-slate-300 font-medium mb-1">顶级后缀:</label>
+            <input v-model="dispatchForm.suffix" type="text"
+                   class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+          </div>
+        </div>
+
+        <!-- 节点勾选列表 -->
+        <div>
+          <div class="flex items-center justify-between mb-1.5">
+            <label class="text-slate-300 font-medium">选择参与执行的 Agent 节点 (已选 {{ selectedNodeList.length }} 台):</label>
+            <button @click="toggleSelectAllNodes" class="text-indigo-400 hover:text-indigo-300 text-[11px]">
+              {{ selectedNodeList.length === nodes.length ? '取消全选' : '全部勾选' }}
+            </button>
+          </div>
+          <div class="space-y-1.5 max-h-48 overflow-y-auto bg-slate-950/80 p-2.5 rounded-xl border border-slate-800">
+            <label v-for="node in nodes" :key="node.node_id"
+                   class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-800/60 cursor-pointer">
+              <div class="flex items-center gap-2">
+                <input type="checkbox" :value="node.node_id" v-model="selectedNodeList"
+                       class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                <span class="font-bold text-slate-200">{{ node.node_id }}</span>
+                <span class="text-[10px] text-slate-500 font-mono">{{ node.ip }}</span>
+              </div>
+              <span class="text-[10px] px-1.5 py-0.5 rounded"
+                    :class="node.status === 'running' ? 'bg-indigo-950 text-indigo-400' : 'bg-slate-800 text-slate-400'">
+                {{ node.status === 'running' ? '扫描中' : '空闲中' }}
+              </span>
+            </label>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">系统将自动把选中的节点按 1/N 到 N/N 均分切片并直接下发指令。</p>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end space-x-2 pt-2 border-t border-slate-800">
+        <button @click="openDispatchModal = false" class="px-3.5 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
+        <button @click="submitDispatch" :disabled="dispatching || selectedNodeList.length === 0"
+                class="px-4 py-1.5 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-40 text-white text-xs font-semibold rounded-lg shadow transition">
+          {{ dispatching ? '正在下发任务...' : '立即分发开跑 🚀' }}
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 2：Agent 接入 Token 与部署命令 -->
+  <div v-if="openTokenModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h3 class="text-base font-bold text-white flex items-center gap-2">
+          <span>🔑</span> 集群通信 Token 与 Agent 接入指南
+        </h3>
+        <button @click="openTokenModal = false" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block text-slate-400 mb-1">当前 Master 鉴权 Token (Bearer Token):</label>
+          <div class="flex items-center gap-2">
+            <input :value="clusterToken" readonly
+                   class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-indigo-300 font-mono text-xs">
+            <button @click="copyText(clusterToken)" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs whitespace-nowrap">
+              复制 Token
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-slate-400 mb-1">任意机器一键启动 Agent (Docker 方式):</label>
+          <div class="relative bg-slate-950 p-3 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-300 space-y-1">
+            <div>docker run -d --restart unless-stopped \</div>
+            <div class="pl-4">--name domain-agent \</div>
+            <div class="pl-4">-e HUB_URL="http://192.168.200.12:8088" \</div>
+            <div class="pl-4">-e HUB_TOKEN="{{ clusterToken }}" \</div>
+            <div class="pl-4">-e NODE_ID="My-Node-Name" \</div>
+            <div class="pl-4">domain-agent:latest</div>
+            <button @click="copyText(`docker run -d --restart unless-stopped --name domain-agent -e HUB_URL=\"http://192.168.200.12:8088\" -e HUB_TOKEN=\"${clusterToken}\" -e NODE_ID=\"My-Node\" domain-agent:latest`)"
+                    class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white">
+              复制命令
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="flex items-center justify-end pt-2 border-t border-slate-800">
+        <button @click="openTokenModal = false" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-medium rounded-lg">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 模态框 3：导入历史 TXT -->
   <div v-if="openImportModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-5 space-y-4 shadow-2xl">
       <div class="flex items-center justify-between">
@@ -347,23 +504,17 @@
         <button @click="openImportModal = false" class="text-slate-400 hover:text-white">✕</button>
       </div>
 
-      <p class="text-xs text-slate-400">将扫描产生的 <code class="text-indigo-400">available_*.txt</code> 文件内容直接粘贴在下方，每行一个域名，系统会自动去重并推断模式：</p>
-
-      <textarea v-model="importText" rows="8" placeholder="例如：&#10;a-bw.com&#10;a-eh.com&#10;ai-x.com"
+      <textarea v-model="importText" rows="8" placeholder="每行一个域名，例如：&#10;a-bw.com&#10;ai-x.com"
                 class="w-full bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-white font-mono placeholder-slate-600 focus:outline-none focus:border-indigo-500"></textarea>
 
       <div class="flex items-center justify-between">
-        <div class="flex items-center gap-2">
-          <label class="text-xs text-slate-400">归属模式:</label>
-          <select v-model="importMode" class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
-            <option value="">自动推断</option>
-            <option value="4letter-">4letter-</option>
-            <option value="4mix">4mix</option>
-            <option value="3letter-">3letter-</option>
-            <option value="5letter">5letter</option>
-          </select>
-        </div>
-
+        <select v-model="importMode" class="bg-slate-800 text-xs text-white rounded border border-slate-700 px-2 py-1">
+          <option value="">自动推断模式</option>
+          <option value="4letter-">4letter-</option>
+          <option value="4mix-">4mix-</option>
+          <option value="3letter-">3letter-</option>
+          <option value="5letter">5letter</option>
+        </select>
         <div class="flex items-center space-x-2">
           <button @click="openImportModal = false" class="px-3 py-1.5 text-xs text-slate-400 hover:text-white">取消</button>
           <button @click="submitImport" :disabled="importing || !importText.trim()"
@@ -375,7 +526,7 @@
     </div>
   </div>
 
-  <!-- Toast 提示通知 -->
+  <!-- Toast -->
   <div v-if="toastMsg" class="fixed bottom-6 right-6 z-50 bg-slate-800 text-white px-4 py-2.5 rounded-xl border border-slate-700 shadow-2xl text-xs font-medium flex items-center gap-2">
     <span>💡</span>
     <span>{{ toastMsg }}</span>
@@ -392,6 +543,7 @@ createApp({
     const toastMsg = ref('');
     const stats = ref({});
     const nodes = ref([]);
+    const clusterToken = ref('');
     const domainList = ref([]);
     const totalDomains = ref(0);
     const page = ref(1);
@@ -405,6 +557,12 @@ createApp({
     const hasVowel = ref(false);
     const excludeRare = ref(false);
 
+    const openDispatchModal = ref(false);
+    const dispatching = ref(false);
+    const dispatchForm = ref({ mode: '4mix-', suffix: 'com', threads: 25 });
+    const selectedNodeList = ref([]);
+
+    const openTokenModal = ref(false);
     const openImportModal = ref(false);
     const importText = ref('');
     const importMode = ref('');
@@ -421,9 +579,11 @@ createApp({
     const modeOptions = [
       { id: 'all', label: '全部模式' },
       { id: '4letter-', label: '4letter-' },
-      { id: '4mix', label: '4mix' },
+      { id: '4mix-', label: '4mix-' },
+      { id: '4num-', label: '4num-' },
       { id: '3letter-', label: '3letter-' },
-      { id: '3mix', label: '3mix' },
+      { id: '3mix-', label: '3mix-' },
+      { id: '4mix', label: '4mix' },
       { id: '5letter', label: '5letter' }
     ];
 
@@ -443,34 +603,17 @@ createApp({
       return ts.replace('T', ' ').split('.')[0];
     };
 
-    // 格式化 6 节点列表展示 (即使某个节点未上报也展示占位)
-    const fixedNodeNames = ['Oracle-JP', 'Oracle-KR', 'Google-US', 'BL', 'LD', 'FN'];
-    const displayNodes = computed(() => {
-      const nodeMap = {};
-      nodes.value.forEach(n => { nodeMap[n.node_id] = n; });
-      return fixedNodeNames.map(name => {
-        if (nodeMap[name]) {
-          const item = nodeMap[name];
-          const pct = item.total > 0 ? ((item.scanned / item.total) * 100).toFixed(1) : 0;
-          let lastStr = '刚刚';
-          if (item.idle_sec > 60) lastStr = `${Math.floor(item.idle_sec / 60)}分钟前`;
-          else if (item.idle_sec > 5) lastStr = `${item.idle_sec}秒前`;
-          return { ...item, percent: pct, last_seen_str: lastStr };
-        }
-        return {
-          node_id: name,
-          mode: '',
-          shard: '',
-          scanned: 0,
-          total: 0,
-          percent: 0,
-          speed: 0,
-          available_count: 0,
-          status: 'offline',
-          last_seen_str: '未连接'
-        };
-      });
-    });
+    const formatIdle = (sec) => {
+      if (sec === undefined || sec === null) return '-';
+      if (sec <= 5) return '刚刚';
+      if (sec < 60) return `${sec}秒前`;
+      return `${Math.floor(sec / 60)}分钟前`;
+    };
+
+    const getPercent = (node) => {
+      if (!node.total || node.total <= 0) return 0;
+      return ((node.scanned / node.total) * 100).toFixed(1);
+    };
 
     const totalPages = computed(() => Math.max(1, Math.ceil(totalDomains.value / limit.value)));
 
@@ -486,8 +629,22 @@ createApp({
       try {
         const res = await fetch('/api/nodes');
         const data = await res.json();
-        if (data.code === 0) nodes.value = data.data;
+        if (data.code === 0) {
+          nodes.value = data.data;
+          // 首次默认勾选所有在线节点
+          if (selectedNodeList.value.length === 0) {
+            selectedNodeList.value = nodes.value.map(n => n.node_id);
+          }
+        }
       } catch (e) { console.error('fetchNodes err', e); }
+    };
+
+    const fetchToken = async () => {
+      try {
+        const res = await fetch('/api/token');
+        const data = await res.json();
+        if (data.code === 0) clusterToken.value = data.data.token;
+      } catch (e) { console.error('fetchToken err', e); }
     };
 
     const fetchDomains = async () => {
@@ -517,6 +674,78 @@ createApp({
       }
     };
 
+    const toggleSelectAllNodes = () => {
+      if (selectedNodeList.value.length === nodes.value.length) {
+        selectedNodeList.value = [];
+      } else {
+        selectedNodeList.value = nodes.value.map(n => n.node_id);
+      }
+    };
+
+    const submitDispatch = async () => {
+      if (selectedNodeList.value.length === 0) {
+        showToast('请至少选择一个节点');
+        return;
+      }
+      dispatching.value = true;
+      try {
+        const res = await fetch('/api/task/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mode: dispatchForm.value.mode,
+            suffix: dispatchForm.value.suffix,
+            threads: dispatchForm.value.threads,
+            nodes: selectedNodeList.value
+          })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast(data.msg);
+          openDispatchModal.value = false;
+          fetchStats();
+          fetchNodes();
+        } else {
+          showToast(data.msg || '分发失败');
+        }
+      } catch (e) {
+        showToast('分发请求出错');
+      } finally {
+        dispatching.value = false;
+      }
+    };
+
+    const stopClusterTask = async (taskId) => {
+      if (!confirm('确定要停止当前集群扫描任务吗？')) return;
+      try {
+        const res = await fetch('/api/task/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ task_id: taskId })
+        });
+        const data = await res.json();
+        if (data.code === 0) {
+          showToast(data.msg);
+          fetchStats();
+          fetchNodes();
+        }
+      } catch (e) {
+        showToast('停止请求失败');
+      }
+    };
+
+    const deleteNode = async (nodeId) => {
+      if (!confirm(`确定清理节点 ${nodeId} 的记录吗？`)) return;
+      try {
+        await fetch('/api/nodes/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ node_id: nodeId })
+        });
+        fetchNodes();
+      } catch (e) {}
+    };
+
     const toggleStatus = async (item, newStatus) => {
       try {
         const res = await fetch('/api/domain/status', {
@@ -527,7 +756,6 @@ createApp({
         const data = await res.json();
         if (data.code === 0) {
           item.status = newStatus;
-          showToast(`已更新为 ${newStatus}`);
           fetchStats();
         }
       } catch (e) {
@@ -593,23 +821,25 @@ createApp({
       fetchStats();
       fetchNodes();
       fetchDomains();
+      fetchToken();
     };
 
     onMounted(() => {
       refreshAll();
-      // 3 秒轮询心跳与统计
       setInterval(() => {
         fetchStats();
         fetchNodes();
-      }, 3000);
+      }, 2500);
     });
 
     return {
-      loading, toastMsg, stats, nodes, displayNodes, domainList, totalDomains,
+      loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
       page, limit, totalPages, currentStatus, currentMode, searchKeyword,
       prefixFilter, suffixFilter, hasVowel, excludeRare, statusTabs, modeOptions,
-      openImportModal, importText, importMode, importing,
-      copyText, formatTime, fetchDomains, toggleStatus, recheckDomain,
+      openDispatchModal, dispatching, dispatchForm, selectedNodeList, toggleSelectAllNodes,
+      submitDispatch, stopClusterTask, deleteNode,
+      openTokenModal, openImportModal, importText, importMode, importing,
+      copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStatus, recheckDomain,
       submitImport, exportCurrent, refreshAll
     };
   }

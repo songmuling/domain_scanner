@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Domain Hub - 统一域名扫描中心控制台与实时监控服务
-支持多节点心跳监控、可用域名集中存储、实时状态管理、智能筛选与直达注册。
-纯 Python 标准库实现，零外部依赖。
+Domain Hub - 统一域名扫描集群 Master 控制中心 (Nezha 架构)
+- 支持 Agent 自动发现与注册
+- 支持 Token 安全握手鉴权
+- 支持 Web 端多节点一键切片分发、启动、暂停、停止
+- 支持实时多机进度条监控、扫速聚合、可用域名库与生命周期管理
+- 纯 Python 3 标准库打造，零外部依赖
 """
 
 import os
 import sys
 import json
 import sqlite3
+import secrets
 import urllib.request
 import urllib.error
 import urllib.parse
@@ -17,7 +21,6 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone, timedelta
 import threading
 
-# 基础目录与数据库配置
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 STATIC_DIR = os.path.join(BASE_DIR, "static")
@@ -26,8 +29,11 @@ DB_PATH = os.path.join(DATA_DIR, "domains.db")
 os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
-# 线程锁保障 SQLite 迁移与初始化的安全
 DB_LOCK = threading.Lock()
+
+def get_beijing_time_str():
+    bj_tz = timezone(timedelta(hours=8))
+    return datetime.now(bj_tz).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=15)
@@ -36,9 +42,10 @@ def get_db():
     conn.execute("PRAGMA synchronous=NORMAL;")
     return conn
 
-def init_db():
+def init_db_and_token():
     with DB_LOCK:
         with get_db() as conn:
+            # 1. 域名资产表
             conn.execute("""
             CREATE TABLE IF NOT EXISTS domains (
                 domain TEXT PRIMARY KEY,
@@ -50,29 +57,119 @@ def init_db():
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            # 2. 节点注册与心跳表
             conn.execute("""
             CREATE TABLE IF NOT EXISTS nodes (
                 node_id TEXT PRIMARY KEY,
+                ip TEXT,
+                os_info TEXT,
+                agent_version TEXT,
+                status TEXT DEFAULT 'idle',
+                current_task_id TEXT,
                 mode TEXT,
                 shard TEXT,
                 scanned INTEGER DEFAULT 0,
                 total INTEGER DEFAULT 0,
                 speed REAL DEFAULT 0.0,
                 available_count INTEGER DEFAULT 0,
-                status TEXT DEFAULT 'running',
-                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """)
+
+            # 3. 扫描任务表 (Master 下发任务)
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                task_id TEXT PRIMARY KEY,
+                mode TEXT,
+                suffix TEXT DEFAULT 'com',
+                threads INTEGER DEFAULT 25,
+                target_nodes TEXT,
+                status TEXT DEFAULT 'running',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+
+            # 4. 任务节点分片分配表
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS task_assignments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                task_id TEXT,
+                node_id TEXT,
+                shard_num INTEGER,
+                shard_total INTEGER,
+                status TEXT DEFAULT 'pending',
+                scanned INTEGER DEFAULT 0,
+                total INTEGER DEFAULT 0,
+                speed REAL DEFAULT 0.0,
+                available_count INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(task_id, node_id)
+            );
+            """)
+
+            # 5. 系统全局配置表 (存储自生成的安全 Token 等)
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS system_config (
+                key TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            """)
+
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_mode ON domains(mode);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_created ON domains(created_at);")
+
+            # 自动迁移 nodes 旧表结构
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(nodes);")
+            existing_cols = {row["name"] for row in cur.fetchall()}
+            for col, col_type in [
+                ("ip", "TEXT"), ("os_info", "TEXT"), ("agent_version", "TEXT"),
+                ("current_task_id", "TEXT"), ("created_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+            ]:
+                if col not in existing_cols:
+                    try:
+                        conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_type};")
+                    except Exception:
+                        pass
+
+            # 确保 Master Token 存在
+            env_token = os.environ.get("HUB_TOKEN", "").strip()
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM system_config WHERE key = 'agent_token';")
+            row = cur.fetchone()
+
+            if env_token:
+                final_token = env_token
+                conn.execute("""
+                INSERT INTO system_config (key, value, updated_at) VALUES ('agent_token', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+                """, (final_token,))
+            elif row and row[0]:
+                final_token = row[0]
+            else:
+                final_token = secrets.token_hex(16)
+                conn.execute("INSERT INTO system_config (key, value) VALUES ('agent_token', ?);", (final_token,))
+
             conn.commit()
+            return final_token
 
-init_db()
+MASTER_TOKEN = init_db_and_token()
+print(f"[{get_beijing_time_str()}] Domain Hub 核心数据库已就绪，当前集群通信 Token: {MASTER_TOKEN}")
 
-def get_beijing_time_str():
-    bj_tz = timezone(timedelta(hours=8))
-    return datetime.now(bj_tz).strftime("%Y-%m-%d %H:%M:%S")
+def get_current_token():
+    env_token = os.environ.get("HUB_TOKEN", "").strip()
+    if env_token:
+        return env_token
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM system_config WHERE key = 'agent_token';")
+        row = cur.fetchone()
+        return row[0] if row else MASTER_TOKEN
 
 def check_verisign_rdap(domain):
     """权威复检：查询 Verisign 官方 RDAP"""
@@ -94,11 +191,10 @@ def check_verisign_rdap(domain):
     return False, "未知状态"
 
 class HubHandler(BaseHTTPRequestHandler):
-    server_version = "DomainHub/1.0"
+    server_version = "DomainHub-Master/2.0"
 
     def log_message(self, format, *args):
-        # 简化日志输出，避免高频刷屏
-        if self.path.startswith("/api/heartbeat"):
+        if self.path.startswith("/api/agent/heartbeat"):
             return
         sys.stderr.write(f"[{get_beijing_time_str()}] {self.address_string()} - {format % args}\n")
 
@@ -109,7 +205,7 @@ class HubHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hub-Token")
         self.end_headers()
         self.wfile.write(body)
 
@@ -117,15 +213,35 @@ class HubHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Hub-Token")
         self.end_headers()
 
     def read_json_body(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        if content_length == 0:
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            if content_length == 0:
+                return {}
+            body = self.rfile.read(content_length).decode("utf-8")
+            return json.loads(body)
+        except Exception as e:
+            sys.stderr.write(f"JSON解析异常: {e}\n")
             return {}
-        body = self.rfile.read(content_length).decode("utf-8")
-        return json.loads(body)
+
+    def verify_agent_token(self):
+        """校验 Agent 携带的 Bearer Token 或 X-Hub-Token"""
+        expected = get_current_token()
+        auth_hdr = self.headers.get("Authorization", "").strip()
+        custom_hdr = self.headers.get("X-Hub-Token", "").strip()
+
+        token = ""
+        if auth_hdr.lower().startswith("bearer "):
+            token = auth_hdr[7:].strip()
+        elif custom_hdr:
+            token = custom_hdr
+
+        if not token or token != expected:
+            return False
+        return True
 
     def do_HEAD(self):
         self.do_GET()
@@ -167,15 +283,19 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur.execute("SELECT COUNT(*) FROM domains WHERE date(created_at, '+8 hours') = date('now', '+8 hours');")
                 today_found = cur.fetchone()[0]
 
-                # 分模式统计
                 cur.execute("SELECT mode, COUNT(*) as cnt FROM domains WHERE status = 'available' GROUP BY mode;")
                 mode_stats = {row["mode"] or "unknown": row["cnt"] for row in cur.fetchall()}
 
-                # 活跃节点与总速度 (30秒内有心跳视为在线)
-                cur.execute("SELECT COUNT(*), COALESCE(SUM(speed), 0) FROM nodes WHERE (strftime('%s', 'now') - strftime('%s', last_seen)) <= 30;")
+                # 30秒内有心跳视为在线
+                cur.execute("SELECT COUNT(*), COALESCE(SUM(speed), 0) FROM nodes WHERE (strftime('%s', 'now') - strftime('%s', last_seen)) <= 30 AND status = 'running';")
                 active_row = cur.fetchone()
                 active_nodes = active_row[0]
                 total_speed = round(active_row[1], 1)
+
+                # 当前全局活跃任务
+                cur.execute("SELECT task_id, mode, status, created_at FROM tasks WHERE status = 'running' ORDER BY created_at DESC LIMIT 1;")
+                active_task_row = cur.fetchone()
+                active_task = dict(active_task_row) if active_task_row else None
 
             self.send_json({
                 "code": 0,
@@ -186,7 +306,8 @@ class HubHandler(BaseHTTPRequestHandler):
                     "today_found": today_found,
                     "active_nodes": active_nodes,
                     "total_speed": total_speed,
-                    "mode_stats": mode_stats
+                    "mode_stats": mode_stats,
+                    "active_task": active_task
                 }
             })
             return
@@ -197,7 +318,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 cur = conn.cursor()
                 cur.execute("""
                 SELECT 
-                    node_id, mode, shard, scanned, total, speed, available_count, status,
+                    node_id, ip, os_info, agent_version, status, current_task_id,
+                    mode, shard, scanned, total, speed, available_count,
                     last_seen,
                     (strftime('%s', 'now') - strftime('%s', last_seen)) as idle_sec
                 FROM nodes
@@ -206,29 +328,60 @@ class HubHandler(BaseHTTPRequestHandler):
                 nodes = []
                 for row in cur.fetchall():
                     idle = row["idle_sec"]
-                    is_online = idle <= 30
+                    is_online = idle <= 35
+                    effective_status = row["status"] if is_online else "offline"
                     nodes.append({
                         "node_id": row["node_id"],
+                        "ip": row["ip"] or "",
+                        "os_info": row["os_info"] or "",
+                        "agent_version": row["agent_version"] or "1.0",
+                        "status": effective_status,
+                        "current_task_id": row["current_task_id"],
                         "mode": row["mode"],
                         "shard": row["shard"],
                         "scanned": row["scanned"],
                         "total": row["total"],
-                        "speed": row["speed"],
+                        "speed": row["speed"] if is_online else 0.0,
                         "available_count": row["available_count"],
-                        "status": "running" if is_online else "offline",
                         "idle_sec": idle,
                         "last_seen": row["last_seen"]
                     })
             self.send_json({"code": 0, "data": nodes})
             return
 
-        # 4. 域名分页与智能筛选 API
+        # 4. 任务列表 API
+        if path == "/api/tasks":
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                SELECT task_id, mode, suffix, threads, target_nodes, status, created_at, updated_at
+                FROM tasks ORDER BY created_at DESC LIMIT 20;
+                """)
+                tasks = []
+                for row in cur.fetchall():
+                    t = dict(row)
+                    cur.execute("""
+                    SELECT node_id, shard_num, shard_total, status, scanned, total, speed, available_count
+                    FROM task_assignments WHERE task_id = ? ORDER BY shard_num ASC;
+                    """, (t["task_id"],))
+                    t["assignments"] = [dict(a) for a in cur.fetchall()]
+                    tasks.append(t)
+            self.send_json({"code": 0, "data": tasks})
+            return
+
+        # 5. Token 查询 API
+        if path == "/api/token":
+            tok = get_current_token()
+            self.send_json({"code": 0, "data": {"token": tok}})
+            return
+
+        # 6. 域名分页与智能筛选 API
         if path == "/api/domains":
             mode = params.get("mode", [""])[0]
             status = params.get("status", ["available"])[0]
             search = params.get("q", [""])[0].strip().lower()
             has_vowel = params.get("has_vowel", ["0"])[0] == "1"
-            exclude_rare = params.get("exclude_rare", ["0"])[0] == "1" # 排除 q, x, z, v
+            exclude_rare = params.get("exclude_rare", ["0"])[0] == "1"
             prefix = params.get("prefix", [""])[0].strip().lower()
             suffix = params.get("suffix", [""])[0].strip().lower()
 
@@ -261,14 +414,11 @@ class HubHandler(BaseHTTPRequestHandler):
 
             where_sql = ("WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
 
-            # 元音与生僻字母过滤在 Python 中处理或 SQL 扩展
             with get_db() as conn:
                 cur = conn.cursor()
-                # 统计总数 (快速估算或精准计数)
                 cur.execute(f"SELECT COUNT(*) FROM domains {where_sql};", bind_params)
                 total_count = cur.fetchone()[0]
 
-                # 查询列表
                 cur.execute(f"""
                 SELECT domain, mode, node_id, status, reason, created_at
                 FROM domains
@@ -279,7 +429,6 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 raw_domains = [dict(row) for row in cur.fetchall()]
 
-            # 内存级特征过滤 (若开启)
             filtered = []
             vowels = set("aeiou")
             rare_letters = set("qxzvy")
@@ -302,7 +451,7 @@ class HubHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 5. 导出 API
+        # 7. 导出 API
         if path == "/api/export":
             mode = params.get("mode", ["all"])[0]
             status = params.get("status", ["available"])[0]
@@ -336,101 +485,256 @@ class HubHandler(BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
 
-        # 1. 节点心跳上报
-        if path == "/api/heartbeat":
-            data = self.read_json_body()
-            node_id = data.get("node_id", "unknown")
-            mode = data.get("mode", "")
-            shard = data.get("shard", "")
-            scanned = int(data.get("scanned", 0))
-            total = int(data.get("total", 0))
-            speed = float(data.get("speed", 0.0))
-            available_count = int(data.get("available", 0))
-            status = data.get("status", "running")
-
-            with get_db() as conn:
-                conn.execute("""
-                INSERT INTO nodes (node_id, mode, shard, scanned, total, speed, available_count, status, last_seen)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                ON CONFLICT(node_id) DO UPDATE SET
-                    mode = excluded.mode,
-                    shard = excluded.shard,
-                    scanned = excluded.scanned,
-                    total = excluded.total,
-                    speed = excluded.speed,
-                    available_count = excluded.available_count,
-                    status = excluded.status,
-                    last_seen = CURRENT_TIMESTAMP;
-                """, (node_id, mode, shard, scanned, total, speed, available_count, status))
-                conn.commit()
-
-            self.send_json({"code": 0, "msg": "heartbeat ok"})
-            return
-
-        # 2. 单个可用域名实时上报
-        if path == "/api/report":
-            data = self.read_json_body()
-            domain = data.get("domain", "").strip().lower()
-            if not domain:
-                self.send_json({"code": 1, "msg": "domain is required"}, 400)
+        # -------------------------------------------------------------
+        # 一、 Agent 端专用接口 (必须经 Token 鉴权认证)
+        # -------------------------------------------------------------
+        if path.startswith("/api/agent/"):
+            if not self.verify_agent_token():
+                self.send_json({"code": 401, "msg": "Unauthorized: 无效或缺失 Token"}, 401)
                 return
 
-            mode = data.get("mode", "")
-            node_id = data.get("node_id", "unknown")
-            reason = data.get("reason", "404 未注册")
+            # 1. Agent 自动注册 (握手)
+            if path == "/api/agent/register":
+                data = self.read_json_body()
+                node_id = data.get("node_id", "").strip()
+                if not node_id:
+                    self.send_json({"code": 1, "msg": "node_id is required"}, 400)
+                    return
+                client_ip = self.client_address[0]
+                os_info = data.get("os_info", "")
+                version = data.get("version", "1.0")
 
+                with get_db() as conn:
+                    conn.execute("""
+                    INSERT INTO nodes (node_id, ip, os_info, agent_version, status, last_seen)
+                    VALUES (?, ?, ?, ?, 'idle', CURRENT_TIMESTAMP)
+                    ON CONFLICT(node_id) DO UPDATE SET
+                        ip = excluded.ip,
+                        os_info = excluded.os_info,
+                        agent_version = excluded.agent_version,
+                        last_seen = CURRENT_TIMESTAMP;
+                    """, (node_id, client_ip, os_info, version))
+                    conn.commit()
+
+                self.send_json({"code": 0, "msg": "注册成功", "node_id": node_id})
+                return
+
+            # 2. Agent 心跳上报与任务指令获取
+            if path == "/api/agent/heartbeat":
+                data = self.read_json_body()
+                node_id = data.get("node_id", "").strip()
+                if not node_id:
+                    self.send_json({"code": 1, "msg": "node_id is required"}, 400)
+                    return
+
+                task_id = data.get("task_id", "")
+                mode = data.get("mode", "")
+                shard = data.get("shard", "")
+                scanned = int(data.get("scanned", 0))
+                total = int(data.get("total", 0))
+                speed = float(data.get("speed", 0.0))
+                avail_cnt = int(data.get("available", 0))
+                client_status = data.get("status", "idle")
+
+                with get_db() as conn:
+                    # 更新节点状态
+                    conn.execute("""
+                    INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, last_seen)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(node_id) DO UPDATE SET
+                        ip = excluded.ip,
+                        status = excluded.status,
+                        current_task_id = excluded.current_task_id,
+                        mode = excluded.mode,
+                        shard = excluded.shard,
+                        scanned = excluded.scanned,
+                        total = excluded.total,
+                        speed = excluded.speed,
+                        available_count = excluded.available_count,
+                        last_seen = CURRENT_TIMESTAMP;
+                    """, (node_id, self.client_address[0], client_status, task_id, mode, shard, scanned, total, speed, avail_cnt))
+
+                    # 如果在跑任务，同步更新任务分片进度
+                    if task_id:
+                        conn.execute("""
+                        UPDATE task_assignments SET
+                            scanned = ?, total = ?, speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                        WHERE task_id = ? AND node_id = ?;
+                        """, (scanned, total, speed, avail_cnt, client_status, task_id, node_id))
+
+                    # 检查 Master 是否有为该节点下发的新指令
+                    cur = conn.cursor()
+                    cur.execute("""
+                    SELECT a.task_id, a.shard_num, a.shard_total, t.mode, t.suffix, t.threads, t.status as task_status
+                    FROM task_assignments a
+                    JOIN tasks t ON a.task_id = t.task_id
+                    WHERE a.node_id = ? AND t.status IN ('running', 'stopped')
+                    ORDER BY t.created_at DESC LIMIT 1;
+                    """, (node_id,))
+                    assign_row = cur.fetchone()
+                    conn.commit()
+
+                # 下发指令判定
+                command = "IDLE"
+                task_payload = None
+
+                if assign_row:
+                    t_status = assign_row["task_status"]
+                    assigned_task_id = assign_row["task_id"]
+
+                    if t_status == "stopped":
+                        if task_id == assigned_task_id and client_status != "idle":
+                            command = "STOP"
+                    elif t_status == "running":
+                        if task_id != assigned_task_id or client_status == "idle":
+                            command = "START"
+                            task_payload = {
+                                "task_id": assigned_task_id,
+                                "mode": assign_row["mode"],
+                                "suffix": assign_row["suffix"],
+                                "shard_num": assign_row["shard_num"],
+                                "shard_total": assign_row["shard_total"],
+                                "threads": assign_row["threads"]
+                            }
+
+                self.send_json({
+                    "code": 0,
+                    "command": command,
+                    "task": task_payload
+                })
+                return
+
+            # 3. Agent 发现可用域名实时入库
+            if path == "/api/agent/report":
+                data = self.read_json_body()
+                domains_to_add = []
+                if "domains" in data and isinstance(data["domains"], list):
+                    domains_to_add = data["domains"]
+                elif "domain" in data:
+                    domains_to_add = [data]
+
+                node_id = data.get("node_id", "unknown")
+                mode = data.get("mode", "")
+
+                added = 0
+                with get_db() as conn:
+                    for item in domains_to_add:
+                        if isinstance(item, str):
+                            d_name = item.strip().lower()
+                            d_mode = mode
+                            d_reason = "404 未注册"
+                        else:
+                            d_name = item.get("domain", "").strip().lower()
+                            d_mode = item.get("mode", mode)
+                            d_reason = item.get("reason", "404 未注册")
+
+                        if not d_name:
+                            continue
+                        try:
+                            conn.execute("""
+                            INSERT INTO domains (domain, mode, node_id, status, reason, created_at, updated_at)
+                            VALUES (?, ?, ?, 'available', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            ON CONFLICT(domain) DO UPDATE SET
+                                node_id = excluded.node_id,
+                                reason = excluded.reason,
+                                updated_at = CURRENT_TIMESTAMP;
+                            """, (d_name, d_mode, node_id, d_reason))
+                            added += 1
+                        except Exception:
+                            pass
+                    conn.commit()
+
+                self.send_json({"code": 0, "msg": f"成功保存 {added} 个域名"})
+                return
+
+        # -------------------------------------------------------------
+        # 二、 Web 控制台调度与管理接口
+        # -------------------------------------------------------------
+
+        # 1. 一键分发扫描任务到选中的节点
+        if path == "/api/task/dispatch":
+            data = self.read_json_body()
+            mode = data.get("mode", "").strip().lower()
+            suffix = data.get("suffix", "com").strip().lower()
+            threads = int(data.get("threads", 25))
+            selected_nodes = data.get("nodes", [])
+
+            if not mode:
+                self.send_json({"code": 1, "msg": "扫描模式不能为空"}, 400)
+                return
+            if not selected_nodes:
+                self.send_json({"code": 1, "msg": "必须至少勾选一个在线节点"}, 400)
+                return
+
+            task_id = f"task_{int(datetime.now().timestamp())}_{mode}"
+            shard_total = len(selected_nodes)
+
+            with get_db() as conn:
+                # 将此前所有正在运行的任务标记为停止
+                conn.execute("UPDATE tasks SET status = 'stopped' WHERE status = 'running';")
+
+                # 创建新任务
+                conn.execute("""
+                INSERT INTO tasks (task_id, mode, suffix, threads, target_nodes, status)
+                VALUES (?, ?, ?, ?, ?, 'running');
+                """, (task_id, mode, suffix, threads, json.dumps(selected_nodes)))
+
+                # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)
+                for idx, n_id in enumerate(selected_nodes, start=1):
+                    conn.execute("""
+                    INSERT INTO task_assignments (task_id, node_id, shard_num, shard_total, status)
+                    VALUES (?, ?, ?, ?, 'pending');
+                    """, (task_id, n_id, idx, shard_total))
+
+                conn.commit()
+
+            self.send_json({
+                "code": 0,
+                "msg": f"任务已创建！已自动切为 {shard_total} 分片并下发到选中的节点",
+                "task_id": task_id
+            })
+            return
+
+        # 2. 停止集群任务
+        if path == "/api/task/stop":
+            data = self.read_json_body()
+            task_id = data.get("task_id", "")
+            with get_db() as conn:
+                if task_id:
+                    conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ?;", (task_id,))
+                    conn.execute("UPDATE task_assignments SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE task_id = ?;", (task_id,))
+                else:
+                    conn.execute("UPDATE tasks SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE status = 'running';")
+                    conn.execute("UPDATE task_assignments SET status = 'stopped', updated_at = CURRENT_TIMESTAMP WHERE status = 'running';")
+                conn.commit()
+
+            self.send_json({"code": 0, "msg": "任务停止指令已广播给所有 Agent"})
+            return
+
+        # 3. 移除离线节点
+        if path == "/api/nodes/delete":
+            data = self.read_json_body()
+            node_id = data.get("node_id", "")
+            if node_id:
+                with get_db() as conn:
+                    conn.execute("DELETE FROM nodes WHERE node_id = ?;", (node_id,))
+                    conn.commit()
+            self.send_json({"code": 0, "msg": "节点记录已清理"})
+            return
+
+        # 4. 重置 / 生成新 Token
+        if path == "/api/token/regenerate":
+            new_tok = secrets.token_hex(16)
             with get_db() as conn:
                 conn.execute("""
-                INSERT INTO domains (domain, mode, node_id, status, reason, created_at, updated_at)
-                VALUES (?, ?, ?, 'available', ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                ON CONFLICT(domain) DO UPDATE SET
-                    node_id = excluded.node_id,
-                    reason = excluded.reason,
-                    updated_at = CURRENT_TIMESTAMP;
-                """, (domain, mode, node_id, reason))
+                INSERT INTO system_config (key, value, updated_at) VALUES ('agent_token', ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP;
+                """, (new_tok,))
                 conn.commit()
-
-            self.send_json({"code": 0, "msg": "domain saved"})
+            self.send_json({"code": 0, "msg": "通信 Token 已更新", "data": {"token": new_tok}})
             return
 
-        # 3. 批量导入历史数据 (TXT内容或数组)
-        if path == "/api/import":
-            data = self.read_json_body()
-            raw_text = data.get("text", "")
-            domains_list = data.get("domains", [])
-            node_id = data.get("node_id", "manual_import")
-            mode = data.get("mode", "")
-
-            if raw_text:
-                domains_list.extend([line.strip().lower() for line in raw_text.splitlines() if line.strip()])
-
-            added = 0
-            with get_db() as conn:
-                for d in domains_list:
-                    if "." not in d:
-                        d = f"{d}.com"
-                    # 自动推断 mode
-                    m = mode
-                    if not m:
-                        clean_name = d.split(".")[0]
-                        has_h = "-" in clean_name
-                        l = len(clean_name)
-                        m = f"{l}letter-" if has_h else f"{l}letter"
-
-                    try:
-                        conn.execute("""
-                        INSERT OR IGNORE INTO domains (domain, mode, node_id, status, reason)
-                        VALUES (?, ?, ?, 'available', '历史数据导入');
-                        """, (d, m, node_id))
-                        added += 1
-                    except Exception:
-                        pass
-                conn.commit()
-
-            self.send_json({"code": 0, "msg": f"成功导入 {added} 个域名"})
-            return
-
-        # 4. 更改域名状态 (收藏 / 购买 / 垃圾桶)
+        # 5. 更改域名状态 (收藏 / 购买 / 垃圾桶)
         if path == "/api/domain/status":
             data = self.read_json_body()
             domain = data.get("domain", "").strip().lower()
@@ -448,7 +752,7 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({"code": 0, "msg": f"状态已更新为 {new_status}"})
             return
 
-        # 5. 实时权威复检 (Verisign RDAP)
+        # 6. 实时权威复检 (Verisign RDAP)
         if path == "/api/domain/recheck":
             data = self.read_json_body()
             domain = data.get("domain", "").strip().lower()
@@ -471,15 +775,51 @@ class HubHandler(BaseHTTPRequestHandler):
             })
             return
 
+        # 7. 历史数据批量导入
+        if path == "/api/import":
+            data = self.read_json_body()
+            raw_text = data.get("text", "")
+            domains_list = data.get("domains", [])
+            node_id = data.get("node_id", "manual_import")
+            mode = data.get("mode", "")
+
+            if raw_text:
+                domains_list.extend([line.strip().lower() for line in raw_text.splitlines() if line.strip()])
+
+            added = 0
+            with get_db() as conn:
+                for d in domains_list:
+                    if "." not in d:
+                        d = f"{d}.com"
+                    m = mode
+                    if not m:
+                        clean_name = d.split(".")[0]
+                        has_h = "-" in clean_name
+                        l = len(clean_name)
+                        m = f"{l}letter-" if has_h else f"{l}letter"
+
+                    try:
+                        conn.execute("""
+                        INSERT OR IGNORE INTO domains (domain, mode, node_id, status, reason)
+                        VALUES (?, ?, ?, 'available', '历史数据导入');
+                        """, (d, m, node_id))
+                        added += 1
+                    except Exception:
+                        pass
+                conn.commit()
+
+            self.send_json({"code": 0, "msg": f"成功导入 {added} 个域名"})
+            return
+
         self.send_error(404, "Endpoint Not Found")
 
 def run(port=8088):
     server = ThreadingHTTPServer(("0.0.0.0", port), HubHandler)
-    print(f"[{get_beijing_time_str()}] Domain Hub 启动成功! 正在监听 0.0.0.0:{port}")
+    print(f"[{get_beijing_time_str()}] Domain Hub Master 正在监听 0.0.0.0:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\nDomain Hub 正在关闭...")
+        print("\nDomain Hub 正在安全关闭...")
         server.server_close()
 
 if __name__ == "__main__":
