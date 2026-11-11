@@ -1306,9 +1306,13 @@ class HubHandler(BaseHTTPRequestHandler):
                 active_tasks = []
                 for row in cur.fetchall():
                     item = dict(row)
-                    sc = item.get("scanned", 0) or 0
                     tt = item.get("total", 0) or 0
-                    item["progress_pct"] = round((sc / tt * 100), 1) if tt > 0 else 0.0
+                    sc = item.get("scanned", 0) or 0
+                    if tt > 0 and sc > tt:
+                        sc = tt
+                    item["scanned"] = sc
+                    item["total"] = tt
+                    item["progress_pct"] = min(100.0, round((sc / tt * 100), 1)) if tt > 0 else 0.0
                     item["speed"] = round(item.get("speed", 0.0) or 0.0, 1)
                     active_tasks.append(item)
 
@@ -1349,6 +1353,10 @@ class HubHandler(BaseHTTPRequestHandler):
                     idle = row["idle_sec"]
                     is_online = idle <= 35
                     effective_status = row["status"] if is_online else "offline"
+                    sc = row["scanned"] or 0
+                    tt = row["total"] or 0
+                    if tt > 0 and sc > tt:
+                        sc = tt
                     nodes.append({
                         "node_id": row["node_id"],
                         "agent_uuid": row["agent_uuid"] or "",
@@ -1359,8 +1367,8 @@ class HubHandler(BaseHTTPRequestHandler):
                         "current_task_id": row["current_task_id"],
                         "mode": row["mode"],
                         "shard": row["shard"],
-                        "scanned": row["scanned"],
-                        "total": row["total"],
+                        "scanned": sc,
+                        "total": tt,
                         "speed": row["speed"] if is_online else 0.0,
                         "available_count": row["available_count"],
                         "idle_sec": idle,
@@ -1386,7 +1394,17 @@ class HubHandler(BaseHTTPRequestHandler):
                     SELECT node_id, shard_num, shard_total, status, scanned, total, speed, available_count, is_aid, aid_for
                     FROM task_assignments WHERE task_id = ? OR parent_task_id = ? ORDER BY id ASC;
                     """, (t["task_id"], t["task_id"]))
-                    t["assignments"] = [dict(a) for a in cur.fetchall()]
+                    assignments = []
+                    for a in cur.fetchall():
+                        ad = dict(a)
+                        asc = ad.get("scanned", 0) or 0
+                        att = ad.get("total", 0) or 0
+                        if att > 0 and asc > att:
+                            asc = att
+                        ad["scanned"] = asc
+                        ad["total"] = att
+                        assignments.append(ad)
+                    t["assignments"] = assignments
                     tasks.append(t)
             self.send_json({"code": 0, "data": tasks})
             return
@@ -1528,6 +1546,17 @@ class HubHandler(BaseHTTPRequestHandler):
                 with get_db() as conn:
                     node_id, bound_uuid = resolve_node_identity(conn, raw_node_id or f"node_{agent_uuid[-6:]}", agent_uuid)
 
+                    # 权威 total 与 scanned 保护罩：防止分片动态缩减后 Agent 端产生溢出
+                    if task_id:
+                        cur = conn.cursor()
+                        cur.execute("SELECT total FROM task_assignments WHERE task_id = ? AND node_id = ?;", (task_id, node_id))
+                        t_row = cur.fetchone()
+                        if t_row and t_row[0] is not None and t_row[0] > 0:
+                            total = t_row[0]
+
+                    if total > 0 and scanned > total:
+                        scanned = total
+
                     # 更新节点状态
                     conn.execute("""
                     INSERT INTO nodes (node_id, ip, status, current_task_id, mode, shard, scanned, total, speed, available_count, agent_version, agent_uuid, last_seen)
@@ -1538,7 +1567,14 @@ class HubHandler(BaseHTTPRequestHandler):
                         current_task_id = excluded.current_task_id,
                         mode = excluded.mode,
                         shard = excluded.shard,
-                        scanned = excluded.scanned,
+                        scanned = CASE 
+                            WHEN (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id) IS NOT NULL 
+                                 AND (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id) > 0
+                            THEN MIN(excluded.scanned, (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id))
+                            WHEN excluded.total > 0
+                            THEN MIN(excluded.scanned, excluded.total)
+                            ELSE excluded.scanned
+                        END,
                         total = CASE 
                             WHEN (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id) IS NOT NULL 
                             THEN (SELECT total FROM task_assignments WHERE task_id = excluded.current_task_id AND node_id = excluded.node_id)
@@ -1559,9 +1595,10 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         conn.execute("""
                         UPDATE task_assignments SET
-                            scanned = ?, speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+                            scanned = CASE WHEN total > 0 THEN MIN(?, total) ELSE ? END,
+                            speed = ?, available_count = ?, status = ?, updated_at = CURRENT_TIMESTAMP
                         WHERE task_id = ? AND node_id = ?;
-                        """, (scanned, speed, avail_cnt, effective_assign_status, task_id, node_id))
+                        """, (scanned, scanned, speed, avail_cnt, effective_assign_status, task_id, node_id))
 
                         if effective_assign_status == "completed":
                             conn.execute("UPDATE tasks SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE task_id = ? AND is_aid = 1;", (task_id,))
@@ -1735,12 +1772,19 @@ class HubHandler(BaseHTTPRequestHandler):
                                         new_cand_end = slice_start
                                         new_cand_total = cur_tot - slice_size
 
-                                        # 1. 动态缩减慢节点的截止线与总任务量
+                                        # 1. 动态缩减慢节点的截止线与总任务量，同步将 scanned 限制在 new_cand_total 内
                                         conn.execute("""
                                         UPDATE task_assignments
-                                        SET end_idx = ?, total = ?, updated_at = CURRENT_TIMESTAMP
+                                        SET end_idx = ?, total = ?, scanned = MIN(scanned, ?), updated_at = CURRENT_TIMESTAMP
                                         WHERE id = ?;
-                                        """, (new_cand_end, new_cand_total, cand["id"]))
+                                        """, (new_cand_end, new_cand_total, new_cand_total, cand["id"]))
+
+                                        # 同步更新 nodes 表对应条目，彻底防止旧值溢出
+                                        conn.execute("""
+                                        UPDATE nodes
+                                        SET total = ?, scanned = MIN(scanned, ?)
+                                        WHERE node_id = ?;
+                                        """, (new_cand_total, new_cand_total, cand["node_id"]))
 
                                         # 2. 为当前空闲节点生成援助子任务
                                         aid_seq = int(time.time() * 1000) % 100000

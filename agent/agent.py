@@ -199,6 +199,7 @@ class ScanWorker:
         last_ckpt_save = time.time()
         in_flight = set()
         max_in_flight = self.threads * 2
+        submitted_count = self.checked_count
 
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=self.threads) as executor:
@@ -206,9 +207,9 @@ class ScanWorker:
                     if self.stop_requested:
                         break
 
-                    # 动态截止检查：如果已核查数量达到（或超过）缩减后的 total，提前完成！
-                    if self.checked_count >= self.total:
-                        print(f"\n[*] 当前分片已达到缩减后的目标总量 ({self.checked_count:,} / {self.total:,})，提前顺利收官！")
+                    # 动态截止检查：如果已提交或已核查数量达到目标总量，提前顺利收官！
+                    if self.total > 0 and (submitted_count >= self.total or self.checked_count >= self.total):
+                        print(f"\n[*] 当前分片已达到目标总量 ({self.checked_count:,} / {self.total:,})，提前顺利收官！")
                         break
 
                     if skipping:
@@ -218,6 +219,7 @@ class ScanWorker:
 
                     fut = executor.submit(scanner.check_single_domain, domain)
                     in_flight.add(fut)
+                    submitted_count += 1
 
                     # 流式滑动窗口：当流水线达到容量上限时，等待最先完成的任务释放槽位并立即补入新域名（消除批次空转）
                     if len(in_flight) >= max_in_flight:
@@ -267,6 +269,8 @@ class ScanWorker:
         finally:
             self.is_running = False
             self.speed = 0.0
+            if self.total > 0 and self.checked_count > self.total:
+                self.checked_count = self.total
             if not self.stop_requested:
                 self.is_completed = True
                 print(f"\n[🎉 扫描完成] 任务 {self.task_id} 分片 {canonical_shard} 已全量扫描完毕！共核查 {self.checked_count:,} 个，命中可用域名 {self.found_count} 个")
@@ -325,8 +329,8 @@ class HubClient:
             task_id = worker.task_id
             mode = worker.mode
             shard = f"援助 {worker.aid_for}" if worker.is_aid else f"{worker.shard_num}/{worker.shard_total}"
-            scanned = worker.checked_count
             total = worker.total
+            scanned = min(worker.checked_count, total) if total > 0 else worker.checked_count
             speed = worker.speed
             avail = worker.found_count
         elif worker and worker.is_completed:
@@ -334,8 +338,8 @@ class HubClient:
             task_id = worker.task_id
             mode = worker.mode
             shard = f"援助 {worker.aid_for}" if worker.is_aid else f"{worker.shard_num}/{worker.shard_total}"
-            scanned = worker.checked_count
             total = worker.total
+            scanned = min(worker.checked_count, total) if total > 0 else worker.checked_count
             speed = 0.0
             avail = worker.found_count
         else:

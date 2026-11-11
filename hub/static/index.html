@@ -328,8 +328,51 @@
     }
 
     /* 模态框阴影与遮罩 */
-    html:not(.dark) .bg-black\/75 {
+    html:not(.dark) .bg-black\/75,
+    html:not(.dark) .bg-black\/80 {
       background-color: rgb(15 23 42 / 0.5) !important;
+    }
+
+    /* ========================================================= */
+    /* 域名即验浮层 (Inspector Modal) 浅色/深色自适应精细化适配   */
+    /* ========================================================= */
+    html:not(.dark) .inspector-modal-card {
+      background-color: #ffffff !important;
+      border-color: #e2e8f0 !important;
+      box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15) !important;
+    }
+    html:not(.dark) .inspector-modal-header {
+      background-color: #ffffff !important;
+      border-color: #f1f5f9 !important;
+    }
+    html:not(.dark) .inspector-modal-footer {
+      background-color: #f8fafc !important;
+      border-color: #f1f5f9 !important;
+    }
+    html:not(.dark) .inspector-input-box {
+      background-color: #f8fafc !important;
+      border-color: #cbd5e1 !important;
+      color: #0f172a !important;
+    }
+    html:not(.dark) .inspector-input-box:focus {
+      background-color: #ffffff !important;
+      border-color: #6366f1 !important;
+    }
+    html:not(.dark) .inspector-avail-card {
+      background: linear-gradient(135deg, #f0fdf4 0%, #ffffff 100%) !important;
+      border-color: #86efac !important;
+    }
+    html:not(.dark) .inspector-avail-inner {
+      background-color: #ffffff !important;
+      border-color: #e2e8f0 !important;
+    }
+    html:not(.dark) .inspector-reg-card {
+      background-color: #f8fafc !important;
+      border-color: #fecdd3 !important;
+    }
+    html:not(.dark) .inspector-reg-grid {
+      background-color: #ffffff !important;
+      border-color: #e2e8f0 !important;
     }
 
     /* 滚动条浅色适配 */
@@ -437,7 +480,7 @@
               <span class="text-[11px] text-slate-500 font-mono hidden md:inline task-id">ID: {{ t.task_id }}</span>
             </div>
             <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-3 sm:gap-4 flex-wrap task-detail">
-              <span>进度: <b class="text-white font-mono task-progress-num">{{ (t.scanned || 0).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ t.progress_pct || 0 }}%)</span>
+              <span>进度: <b class="text-white font-mono task-progress-num">{{ (t.total > 0 ? Math.min(t.scanned || 0, t.total) : (t.scanned || 0)).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ Math.min(100.0, Number(t.progress_pct || 0)).toFixed(1) }}%)</span>
               <span>综合速率: <b class="text-emerald-400 font-mono task-speed">{{ t.speed || 0 }} 个/秒</b></span>
               <span>发现可用: <b class="text-indigo-300 font-mono task-found">{{ t.available_count || 0 }} 个</b></span>
             </div>
@@ -556,7 +599,7 @@
           <div class="mt-2.5">
             <div class="flex justify-between text-[11px] text-slate-400 mb-1">
               <span>进度: {{ getPercent(node) }}%</span>
-              <span>{{ node.scanned?.toLocaleString() || 0 }} / {{ node.total?.toLocaleString() || 0 }}</span>
+              <span>{{ (node.total > 0 ? Math.min(node.scanned || 0, node.total) : (node.scanned || 0)).toLocaleString() }} / {{ (node.total || 0).toLocaleString() }}</span>
             </div>
             <div class="w-full bg-slate-800/80 rounded-full h-1.5 overflow-hidden">
               <div class="bg-gradient-to-r from-indigo-500 to-violet-500 h-1.5 rounded-full transition-all duration-500"
@@ -1223,11 +1266,11 @@
     <!-- 模态框 4：单域名权威深度即验 (形态 A 浮层面板) -->
     <div v-if="showInspectorModal"
       @click.self="closeInspectorModal"
-      class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div class="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-xl shadow-2xl flex flex-col my-auto overflow-hidden animate-fade-in">
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
+      <div class="inspector-modal-card bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl flex flex-col my-auto overflow-hidden animate-fade-in">
 
         <!-- Modal 头部 -->
-        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900/90">
+        <div class="inspector-modal-header flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <div class="flex items-center gap-2.5">
             <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-white text-base shadow-lg shadow-indigo-600/30">
               🔍
@@ -1248,7 +1291,7 @@
                 v-model="inspectorDomainInput"
                 @keyup.enter="runDomainInspect"
                 placeholder="输入待查域名，如 tesla、openai.com、888888 (回车即查)"
-                class="w-full bg-slate-950 border border-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm placeholder:text-slate-500 pr-24 transition">
+                class="inspector-input-box w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm placeholder:text-slate-500 pr-24 transition">
               <div class="absolute right-1.5 flex items-center gap-1">
                 <button v-if="inspectorDomainInput" @click="inspectorDomainInput = ''" class="text-slate-500 hover:text-slate-300 px-1 text-xs">✕</button>
                 <button @click="runDomainInspect" :disabled="inspecting || !inspectorDomainInput.trim()"
@@ -1281,7 +1324,7 @@
           <div v-else-if="inspectResult" class="space-y-3 animate-fade-in">
             <!-- 状态大卡片：未注册 (Available) -->
             <div v-if="inspectResult.available === true"
-              class="p-4 rounded-xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
+              class="inspector-avail-card p-4 rounded-xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
               <div class="flex items-center justify-between flex-wrap gap-2">
                 <div class="flex items-center gap-2.5">
                   <span class="text-2xl">🎉</span>
@@ -1303,7 +1346,7 @@
               </div>
 
               <!-- 本地资产库同步提示 -->
-              <div class="flex items-center justify-between text-[11px] text-slate-400 bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800/80">
+              <div class="inspector-avail-inner flex items-center justify-between text-[11px] text-slate-400 bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800/80">
                 <div class="flex items-center gap-1.5">
                   <span>📦 本地资产库:</span>
                   <span v-if="inspectResult.local" class="text-indigo-400 font-medium">已收录 (模式: {{ inspectResult.local.mode || '-' }})</span>
@@ -1337,7 +1380,7 @@
 
             <!-- 状态大卡片：已被注册 (Registered) -->
             <div v-else-if="inspectResult.available === false"
-              class="p-4 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-3">
+              class="inspector-reg-card p-4 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-3">
               <div class="flex items-center justify-between flex-wrap gap-2">
                 <div class="flex items-center gap-2.5">
                   <span class="text-2xl">🔒</span>
@@ -1361,7 +1404,7 @@
               </div>
 
               <!-- RDAP 详实注册信息网格 -->
-              <div v-if="inspectResult.rdap" class="grid grid-cols-2 gap-2 text-[11px] bg-slate-900/90 p-3 rounded-lg border border-slate-800/80">
+              <div v-if="inspectResult.rdap" class="inspector-reg-grid grid grid-cols-2 gap-2 text-[11px] bg-slate-900 p-3 rounded-lg border border-slate-800">
                 <div>
                   <span class="text-slate-400">所属注册商:</span>
                   <div class="text-white font-medium mt-0.5 truncate" :title="inspectResult.rdap.registrar">{{ inspectResult.rdap.registrar || '-' }}</div>
@@ -1405,7 +1448,7 @@
           </div>
         </div>
 
-        <div class="p-3 border-t border-slate-800 shrink-0 bg-slate-900/90 flex items-center justify-between text-[11px] text-slate-500">
+        <div class="inspector-modal-footer p-3.5 border-t border-slate-800 shrink-0 bg-slate-900 flex items-center justify-between text-[11px] text-slate-400">
           <span>💡 提示：输入纯前缀 (如 ai88) 将默认查验 .com 后缀权威状态</span>
           <button @click="closeInspectorModal" class="px-3 py-1 text-slate-400 hover:text-white rounded-lg transition">关闭</button>
         </div>
@@ -1769,8 +1812,10 @@
         };
 
         const getPercent = (node) => {
-          if (!node.total || node.total <= 0) return 0;
-          return ((node.scanned / node.total) * 100).toFixed(1);
+          if (!node || !node.total || node.total <= 0) return '0.0';
+          const sc = Math.min(node.scanned || 0, node.total);
+          const pct = Math.min(100.0, (sc / node.total) * 100);
+          return pct.toFixed(1);
         };
 
         const totalPages = computed(() => Math.max(1, Math.ceil(totalDomains.value / limit.value)));
