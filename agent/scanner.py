@@ -168,26 +168,35 @@ def calc_total(length, use_letters=True, use_digits=False, use_hyphen=False):
     if not pool:
         return 0
     pool_len = len(pool)
-    base = pool_len ** length
-    return base * (length - 1) if use_hyphen else base
+    if use_hyphen:
+        if length < 3:
+            return 0
+        char_len = length - 1
+        pos_count = length - 2
+        return (pool_len ** char_len) * pos_count
+    else:
+        return pool_len ** length
 
 def generate_domain(index, length, chars, use_hyphen, suffix="com"):
     """
     O(1) 数学映射：将任意全局索引映射为唯一的域名字符串
     零内存占用，支持十亿级规模候选池极速随机定位
+    当 use_hyphen=True 时，域名主体总长度严格等于 length 位 (字母数字 length-1 位 + 1个 '-')
     """
     pool_len = len(chars)
     if use_hyphen:
-        pos_count = length - 1
+        char_len = length - 1
+        pos_count = length - 2
         hyphen_pos = (index % pos_count) + 1
         char_idx = index // pos_count
     else:
+        char_len = length
         hyphen_pos = None
         char_idx = index
 
     res = []
     curr = char_idx
-    for _ in range(length):
+    for _ in range(char_len):
         res.append(chars[curr % pool_len])
         curr //= pool_len
     res.reverse()

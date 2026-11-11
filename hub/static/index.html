@@ -1706,8 +1706,14 @@
           if (dispatchForm.value.use_letters) pool += 26;
           if (dispatchForm.value.use_digits) pool += 10;
           if (pool === 0) return 0;
-          const base = Math.pow(pool, dispatchForm.value.length);
-          return dispatchForm.value.use_hyphen ? base * (dispatchForm.value.length - 1) : base;
+          if (dispatchForm.value.use_hyphen) {
+            if (dispatchForm.value.length < 3) return 0;
+            const charLen = dispatchForm.value.length - 1;
+            const posCount = dispatchForm.value.length - 2;
+            return Math.pow(pool, charLen) * posCount;
+          } else {
+            return Math.pow(pool, dispatchForm.value.length);
+          }
         });
 
         const derivedModeName = computed(() => {
@@ -1724,9 +1730,9 @@
           if (!hasH) {
             return `${sample.slice(0, len)}.com`;
           }
-          if (len === 3) return 'a-b.com, ab-c.com';
-          if (len === 4) return 'ab-cd.com, a-bcd.com, abc-d.com';
-          if (len === 5) return 'ab-cde.com, abc-de.com';
+          if (len === 3) return '1-2.com, a-b.com';
+          if (len === 4) return '1-23.com, 12-3.com, a-bc.com, ab-c.com';
+          if (len === 5) return 'ab-cd.com, a-bcd.com, abc-d.com';
           return 'abc-def.com, ab-cdef.com';
         });
 

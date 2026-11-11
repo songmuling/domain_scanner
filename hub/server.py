@@ -33,6 +33,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 os.makedirs(STATIC_DIR, exist_ok=True)
 
 DB_LOCK = threading.Lock()
+WORK_STEAL_LOCK = threading.Lock()
 
 # 全局忽略部分特殊网络环境下的 SSL 证书校验错误
 ssl_context = ssl.create_default_context()
@@ -40,7 +41,7 @@ ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
 def calc_domain_total(length, use_letters=True, use_digits=False, use_hyphen=False):
-    """O(1) 计算任意规则下的候选域名空间全量"""
+    """O(1) 计算任意规则下的候选域名空间全量 (带连字符时总长严格等于 length 位)"""
     chars = ""
     if use_letters:
         chars += "abcdefghijklmnopqrstuvwxyz"
@@ -49,8 +50,14 @@ def calc_domain_total(length, use_letters=True, use_digits=False, use_hyphen=Fal
     if not chars:
         return 0
     pool_len = len(chars)
-    base = pool_len ** length
-    return base * (length - 1) if use_hyphen else base
+    if use_hyphen:
+        if length < 3:
+            return 0
+        char_len = length - 1
+        pos_count = length - 2
+        return (pool_len ** char_len) * pos_count
+    else:
+        return pool_len ** length
 
 def ensure_assignment_bounds(conn, row, task_row):
     """确保分片记录具备精准的 start_idx 和 end_idx 区间，无缝兼容历史运行中的旧任务"""
@@ -1719,133 +1726,135 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 4. 尾部工作窃取 (Work-Stealing / 尾部援助接力)
                 # 当节点空闲 (idle 或已跑完 completed)，自动从集群中最慢节点的未扫尾部切取任务接力加速
+                # 加 WORK_STEAL_LOCK 互斥锁，彻底杜绝多节点同毫秒完成时的争抢碰撞
                 is_node_free = (client_status in ("idle", "completed") or (total > 0 and scanned >= total))
                 if command == "IDLE" and is_node_free:
-                    with get_db() as conn:
-                        cur = conn.cursor()
-                        # 查找当前是否有正在运行的根主任务
-                        cur.execute("""
-                        SELECT task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads
-                        FROM tasks
-                        WHERE status = 'running' AND (is_aid = 0 OR is_aid IS NULL)
-                        ORDER BY created_at DESC LIMIT 1;
-                        """)
-                        parent_task = cur.fetchone()
-
-                        if parent_task:
-                            p_task_id = parent_task["task_id"]
-                            # 1. 严格权限校验：只有被勾选且实际参与了本次任务初始分片的节点，才允许接力扫尾（绝不拉未被选中的其他空闲节点）
+                    with WORK_STEAL_LOCK:
+                        with get_db() as conn:
+                            cur = conn.cursor()
+                            # 查找当前是否有正在运行的根主任务
                             cur.execute("""
-                            SELECT 1 FROM task_assignments
-                            WHERE task_id = ? AND node_id = ? AND (is_aid = 0 OR is_aid IS NULL);
-                            """, (p_task_id, node_id))
-                            participated = cur.fetchone()
+                            SELECT task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads
+                            FROM tasks
+                            WHERE status = 'running' AND (is_aid = 0 OR is_aid IS NULL)
+                            ORDER BY created_at DESC LIMIT 1;
+                            """)
+                            parent_task = cur.fetchone()
 
-                            # 2. 确认当前节点在该主任务下没有其他未结算的活跃任务
-                            cur.execute("""
-                            SELECT id FROM task_assignments
-                            WHERE (task_id = ? OR parent_task_id = ?) AND node_id = ? AND status IN ('pending', 'running');
-                            """, (p_task_id, p_task_id, node_id))
-                            active_on_node = cur.fetchall()
-
-                            if participated and not active_on_node:
-                                # 寻找当前主任务下剩余工作量最大且处于 running 的慢节点分片
+                            if parent_task:
+                                p_task_id = parent_task["task_id"]
+                                # 1. 严格权限校验：只有被勾选且实际参与了本次任务初始分片的节点，才允许接力扫尾（绝不拉未被选中的其他空闲节点）
                                 cur.execute("""
-                                SELECT a.id, a.task_id, a.node_id, a.shard_num, a.shard_total, a.scanned, a.total, a.start_idx, a.end_idx
-                                FROM task_assignments a
-                                WHERE (a.task_id = ? OR a.parent_task_id = ?)
-                                  AND a.status = 'running'
-                                  AND a.node_id != ?
-                                ORDER BY (a.total - a.scanned) DESC;
+                                SELECT 1 FROM task_assignments
+                                WHERE task_id = ? AND node_id = ? AND (is_aid = 0 OR is_aid IS NULL);
+                                """, (p_task_id, node_id))
+                                participated = cur.fetchone()
+
+                                # 2. 确认当前节点在该主任务下没有其他未结算的活跃任务
+                                cur.execute("""
+                                SELECT id FROM task_assignments
+                                WHERE (task_id = ? OR parent_task_id = ?) AND node_id = ? AND status IN ('pending', 'running');
                                 """, (p_task_id, p_task_id, node_id))
-                                candidates = cur.fetchall()
+                                active_on_node = cur.fetchall()
 
-                                for cand in candidates:
-                                    s_idx, e_idx, cur_tot = ensure_assignment_bounds(conn, cand, parent_task)
-                                    c_scanned = cand["scanned"] or 0
-                                    remaining = cur_tot - c_scanned
-                                    if remaining > 5000:
-                                        # 触发尾部工作窃取：从慢节点的未扫尾部切出最多 5 万（或剩余的一半）
-                                        slice_size = min(50000, remaining // 2)
-                                        slice_end = e_idx
-                                        slice_start = slice_end - slice_size
-                                        new_cand_end = slice_start
-                                        new_cand_total = cur_tot - slice_size
+                                if participated and not active_on_node:
+                                    # 寻找当前主任务下剩余工作量最大且处于 running 的慢节点分片
+                                    cur.execute("""
+                                    SELECT a.id, a.task_id, a.node_id, a.shard_num, a.shard_total, a.scanned, a.total, a.start_idx, a.end_idx
+                                    FROM task_assignments a
+                                    WHERE (a.task_id = ? OR a.parent_task_id = ?)
+                                      AND a.status = 'running'
+                                      AND a.node_id != ?
+                                    ORDER BY (a.total - a.scanned) DESC;
+                                    """, (p_task_id, p_task_id, node_id))
+                                    candidates = cur.fetchall()
 
-                                        # 1. 动态缩减慢节点的截止线与总任务量，同步将 scanned 限制在 new_cand_total 内
-                                        conn.execute("""
-                                        UPDATE task_assignments
-                                        SET end_idx = ?, total = ?, scanned = MIN(scanned, ?), updated_at = CURRENT_TIMESTAMP
-                                        WHERE id = ?;
-                                        """, (new_cand_end, new_cand_total, new_cand_total, cand["id"]))
+                                    for cand in candidates:
+                                        s_idx, e_idx, cur_tot = ensure_assignment_bounds(conn, cand, parent_task)
+                                        c_scanned = cand["scanned"] or 0
+                                        remaining = cur_tot - c_scanned
+                                        if remaining > 5000:
+                                            # 触发尾部工作窃取：从慢节点的未扫尾部切出最多 5 万（或剩余的一半）
+                                            slice_size = min(50000, remaining // 2)
+                                            slice_end = e_idx
+                                            slice_start = slice_end - slice_size
+                                            new_cand_end = slice_start
+                                            new_cand_total = cur_tot - slice_size
 
-                                        # 同步更新 nodes 表对应条目，彻底防止旧值溢出
-                                        conn.execute("""
-                                        UPDATE nodes
-                                        SET total = ?, scanned = MIN(scanned, ?)
-                                        WHERE node_id = ?;
-                                        """, (new_cand_total, new_cand_total, cand["node_id"]))
+                                            # 1. 动态缩减慢节点的截止线与总任务量，同步将 scanned 限制在 new_cand_total 内
+                                            conn.execute("""
+                                            UPDATE task_assignments
+                                            SET end_idx = ?, total = ?, scanned = MIN(scanned, ?), updated_at = CURRENT_TIMESTAMP
+                                            WHERE id = ?;
+                                            """, (new_cand_end, new_cand_total, new_cand_total, cand["id"]))
 
-                                        # 2. 为当前空闲节点生成援助子任务
-                                        aid_seq = int(time.time() * 1000) % 100000
-                                        aid_task_id = f"{p_task_id}_aid_{node_id}_{aid_seq}"
-                                        conn.execute("""
-                                        INSERT INTO tasks (
-                                            task_id, mode, length, use_letters, use_digits, use_hyphen,
-                                            reset_checkpoint, suffix, threads, target_nodes, status,
-                                            is_aid, parent_task_id
-                                        ) VALUES (
-                                            ?, ?, ?, ?, ?, ?,
-                                            0, ?, ?, ?, 'running',
-                                            1, ?
-                                        );
-                                        """, (
-                                            aid_task_id, parent_task["mode"], parent_task["length"],
-                                            parent_task["use_letters"], parent_task["use_digits"], parent_task["use_hyphen"],
-                                            parent_task["suffix"], parent_task["threads"], json.dumps([node_id]),
-                                            p_task_id
-                                        ))
+                                            # 同步更新 nodes 表对应条目，彻底防止旧值溢出
+                                            conn.execute("""
+                                            UPDATE nodes
+                                            SET total = ?, scanned = MIN(scanned, ?)
+                                            WHERE node_id = ?;
+                                            """, (new_cand_total, new_cand_total, cand["node_id"]))
 
-                                        # 3. 记录援助分片到 task_assignments
-                                        conn.execute("""
-                                        INSERT INTO task_assignments (
-                                            task_id, node_id, shard_num, shard_total, status,
-                                            scanned, total, start_idx, end_idx,
-                                            is_aid, aid_for, parent_task_id
-                                        ) VALUES (
-                                            ?, ?, 0, ?, 'running',
-                                            0, ?, ?, ?,
-                                            1, ?, ?
-                                        );
-                                        """, (
-                                            aid_task_id, node_id, cand["shard_total"],
-                                            slice_size, slice_start, slice_end,
-                                            cand["node_id"], p_task_id
-                                        ))
-                                        conn.commit()
+                                            # 2. 为当前空闲节点生成援助子任务
+                                            aid_seq = int(time.time() * 1000) % 100000
+                                            aid_task_id = f"{p_task_id}_aid_{node_id}_{aid_seq}"
+                                            conn.execute("""
+                                            INSERT INTO tasks (
+                                                task_id, mode, length, use_letters, use_digits, use_hyphen,
+                                                reset_checkpoint, suffix, threads, target_nodes, status,
+                                                is_aid, parent_task_id
+                                            ) VALUES (
+                                                ?, ?, ?, ?, ?, ?,
+                                                0, ?, ?, ?, 'running',
+                                                1, ?
+                                            );
+                                            """, (
+                                                aid_task_id, parent_task["mode"], parent_task["length"],
+                                                parent_task["use_letters"], parent_task["use_digits"], parent_task["use_hyphen"],
+                                                parent_task["suffix"], parent_task["threads"], json.dumps([node_id]),
+                                                p_task_id
+                                            ))
 
-                                        command = "START"
-                                        task_payload = {
-                                            "task_id": aid_task_id,
-                                            "parent_task_id": p_task_id,
-                                            "mode": parent_task["mode"],
-                                            "length": parent_task["length"],
-                                            "use_letters": bool(parent_task["use_letters"]),
-                                            "use_digits": bool(parent_task["use_digits"]),
-                                            "use_hyphen": bool(parent_task["use_hyphen"]),
-                                            "reset_checkpoint": False,
-                                            "suffix": parent_task["suffix"],
-                                            "start_idx": slice_start,
-                                            "end_idx": slice_end,
-                                            "total": slice_size,
-                                            "shard_num": 0,
-                                            "shard_total": cand["shard_total"],
-                                            "threads": parent_task["threads"],
-                                            "is_aid": True,
-                                            "aid_for": cand["node_id"]
-                                        }
-                                        print(f"[{get_beijing_time_str()}] ⚡ 触发尾部工作窃取：空闲节点 【{node_id}】 接力援助慢节点 【{cand['node_id']}】，分流尾部区间 [{slice_start:,} ~ {slice_end:,}] (共 {slice_size:,} 个域名)")
-                                        break
+                                            # 3. 记录援助分片到 task_assignments
+                                            conn.execute("""
+                                            INSERT INTO task_assignments (
+                                                task_id, node_id, shard_num, shard_total, status,
+                                                scanned, total, start_idx, end_idx,
+                                                is_aid, aid_for, parent_task_id
+                                            ) VALUES (
+                                                ?, ?, 0, ?, 'running',
+                                                0, ?, ?, ?,
+                                                1, ?, ?
+                                            );
+                                            """, (
+                                                aid_task_id, node_id, cand["shard_total"],
+                                                slice_size, slice_start, slice_end,
+                                                cand["node_id"], p_task_id
+                                            ))
+                                            conn.commit()
+
+                                            command = "START"
+                                            task_payload = {
+                                                "task_id": aid_task_id,
+                                                "parent_task_id": p_task_id,
+                                                "mode": parent_task["mode"],
+                                                "length": parent_task["length"],
+                                                "use_letters": bool(parent_task["use_letters"]),
+                                                "use_digits": bool(parent_task["use_digits"]),
+                                                "use_hyphen": bool(parent_task["use_hyphen"]),
+                                                "reset_checkpoint": False,
+                                                "suffix": parent_task["suffix"],
+                                                "start_idx": slice_start,
+                                                "end_idx": slice_end,
+                                                "total": slice_size,
+                                                "shard_num": 0,
+                                                "shard_total": cand["shard_total"],
+                                                "threads": parent_task["threads"],
+                                                "is_aid": True,
+                                                "aid_for": cand["node_id"]
+                                            }
+                                            print(f"[{get_beijing_time_str()}] ⚡ 触发尾部工作窃取：空闲节点 【{node_id}】 接力援助慢节点 【{cand['node_id']}】，分流尾部区间 [{slice_start:,} ~ {slice_end:,}] (共 {slice_size:,} 个域名)")
+                                            break
 
                 resp_payload = {
                     "code": 0,

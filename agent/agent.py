@@ -22,8 +22,21 @@ import queue
 import signal
 import uuid
 
-# 客户端统一时间戳构建版本号 (yy.mmdd.hhmm 格式)
-AGENT_VERSION = "26.1110.2240"
+def get_agent_version():
+    """
+    自适应获取 Agent 版本号 (yy.mmdd.hhmm 格式)：
+    动态读取 agent.py 文件的最后修改时间 (mtime)，无论 git pull、代码热更新还是手工修改，
+    版本号均全自动生成并与部署时间严格对齐，彻底告别手工递增遗漏问题。
+    """
+    try:
+        cur_file = os.path.abspath(__file__)
+        mtime = os.path.getmtime(cur_file)
+        dt = datetime.datetime.fromtimestamp(mtime)
+        return dt.strftime("26.%m%d.%H%M")
+    except Exception:
+        return "26.1111.1000"
+
+AGENT_VERSION = get_agent_version()
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -308,7 +321,7 @@ class HubClient:
             "agent_uuid": self.agent_uuid,
             "node_id": self.node_id,
             "os_info": f"{platform.system()} {platform.machine()}",
-            "version": AGENT_VERSION
+            "version": get_agent_version()
         }
         try:
             res = self._post("/api/agent/register", payload)
@@ -363,7 +376,7 @@ class HubClient:
             "speed": speed,
             "available": avail,
             "status": status,
-            "version": AGENT_VERSION
+            "version": get_agent_version()
         }
         try:
             resp = self._post("/api/agent/heartbeat", payload, timeout=3)
@@ -460,7 +473,7 @@ def main():
 
     print(f"==================================================")
     print(f" ⚡ Domain Agent 集群客户端启动中...")
-    print(f" 客户端版本: v{AGENT_VERSION}")
+    print(f" 客户端版本: v{get_agent_version()}")
     print(f" 节点指纹: {agent_uuid}")
     print(f" 节点标识: {node_id}")
     print(f" Master Hub: {args.hub}")
