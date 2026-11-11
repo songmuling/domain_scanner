@@ -2027,8 +2027,10 @@
         const showTemplateHelp = ref(false);
         const quickTemplates = [
           { label: 'LL888 (前2字母+888)', tpl: 'LL888' },
+          { label: 'LL(666|888|999|000) (2字母+吉利三连)', tpl: 'LL(666|888|999|000)' },
+          { label: 'LL(000..999) (2字母+全套纯豹)', tpl: 'LL(000|111|222|333|444|555|666|777|888|999)' },
+          { label: 'AABBB (双叠字+纯豹 260组合)', tpl: '(aa|bb|cc|dd|ee|ff|gg|hh|ii|jj|kk|ll|mm|nn|oo|pp|qq|rr|ss|tt|uu|vv|ww|xx|yy|zz)(000|111|222|333|444|555|666|777|888|999)' },
           { label: 'DDDvip (3数字+vip)', tpl: 'DDDvip' },
-          { label: 'LL666 (前2字母+666)', tpl: 'LL666' },
           { label: 'VV88 (纯元音+88)', tpl: 'VV88' },
           { label: '[a-z]{2}ai (2字母+ai)', tpl: '[a-z]{2}ai' },
           { label: 'LL-LL (2字母-2字母)', tpl: 'LL-LL' }
