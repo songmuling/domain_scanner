@@ -66,6 +66,12 @@ LETTERS_LIST = list("abcdefghijklmnopqrstuvwxyz")
 DIGITS_LIST = list("0123456789")
 ALPHANUM_LIST = LETTERS_LIST + DIGITS_LIST
 
+VOWELS_SET = set(VOWELS_LIST)
+CONSONANTS_SET = set(CONSONANTS_LIST)
+LETTERS_SET = set(LETTERS_LIST)
+DIGITS_SET = set(DIGITS_LIST)
+ALPHANUM_SET = set(ALPHANUM_LIST)
+
 def parse_template(pattern_str):
     """
     将用户模板字符串解析为 slots 列表与笛卡尔积总数
