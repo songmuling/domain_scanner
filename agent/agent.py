@@ -23,7 +23,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1111.1052"
+AGENT_VERSION = "26.1111.1120"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -139,6 +139,10 @@ class ScanWorker:
 
         total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
 
+        self.filter_config = self.task_info.get("storage_filter") or None
+        if self.filter_config and self.filter_config.get("enabled"):
+            print(f"[*] 🎯 启动前置精选规则排查模式 (不符合规则域名本地微秒级跳过，仅送检精品)")
+
         if self.start_idx is not None and self.end_idx is not None:
             start_idx = self.start_idx
             end_idx = self.end_idx
@@ -230,6 +234,38 @@ class ScanWorker:
                         if domain == last_ckpt:
                             skipping = False
                         continue
+
+                    # 🎯 前置精选过滤器：如果在任务中配置了精选规则，且当前域名不符合，本地微秒级直接跳过！
+                    if self.filter_config and self.filter_config.get("enabled"):
+                        if not scanner.matches_filter(domain, self.filter_config):
+                            self.checked_count += 1
+                            submitted_count += 1
+                            last_dom = domain
+
+                            # 若跳过期间有后台已完成的网络任务，顺便结算
+                            if in_flight:
+                                done = {f for f in in_flight if f.done()}
+                                if done:
+                                    in_flight.difference_update(done)
+                                    for f in done:
+                                        dom, is_free, reason = f.result()
+                                        self.checked_count += 1
+                                        if is_free:
+                                            self.found_count += 1
+                                            print(f"\n[√ 发现可用] {dom} -> {reason}")
+                                            self.hub.report_domain(dom, self.mode, reason)
+
+                            now = time.time()
+                            delta_t = now - self._last_time
+                            if delta_t >= 2.0:
+                                self.speed = round((self.checked_count - self._last_count) / delta_t, 1)
+                                self._last_time = now
+                                self._last_count = self.checked_count
+
+                            if now - last_ckpt_save >= 5.0 and last_dom:
+                                scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count)
+                                last_ckpt_save = now
+                            continue
 
                     fut = executor.submit(scanner.check_single_domain, domain)
                     in_flight.add(fut)

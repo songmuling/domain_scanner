@@ -9,6 +9,7 @@ Domain Scanner Engine - 纯 Python 3 标准库域名扫描核心
 """
 
 import os
+import re
 import ssl
 import time
 import json
@@ -367,4 +368,178 @@ def save_checkpoint(ckpt_path, last_domain, checked_count, found_count, found_do
         os.replace(tmp_path, ckpt_path)
     except Exception as e:
         pass
+
+# ----------------- 域名特征分析与前置精选过滤器 -----------------
+
+VOWELS_SET = set("aeiou")
+RARE_CONSONANTS_SET = set("qxzvy")
+
+def clean_domain_name(s):
+    if not s:
+        return ""
+    return s.split(".")[0].replace("-", "").lower()
+
+def has_consecutive_same(s, n):
+    name = clean_domain_name(s)
+    if not name or not n:
+        return False
+    try:
+        n = int(n)
+    except Exception:
+        return False
+    if n < 2 or len(name) < n:
+        return False
+    pattern = r"([a-z0-9])\1{" + str(n - 1) + ",}"
+    return bool(re.search(pattern, name))
+
+def has_sequential(s, n=3, direction="any"):
+    name = clean_domain_name(s)
+    if not name or not n:
+        return False
+    try:
+        n = int(n)
+    except Exception:
+        return False
+    if n < 2 or len(name) < n:
+        return False
+
+    check_asc = direction in ("asc", "any")
+    check_desc = direction in ("desc", "any")
+
+    for i in range(len(name) - n + 1):
+        sub = name[i:i + n]
+        if check_asc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) + 1 == ord(sub[j + 1]) for j in range(n - 1)):
+            return True
+        if check_desc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) - 1 == ord(sub[j + 1]) for j in range(n - 1)):
+            return True
+    return False
+
+def match_pattern(s, pat):
+    name = clean_domain_name(s)
+    if not name or not pat:
+        return False
+    pat = pat.lower()
+    if pat == "palindrome":
+        return len(name) >= 3 and name == name[::-1]
+
+    plen = len(pat)
+    if len(name) < plen:
+        return False
+
+    for i in range(len(name) - plen + 1):
+        window = name[i:i + plen]
+        m_pat2win = {}
+        m_win2pat = {}
+        matched = True
+        for p_ch, w_ch in zip(pat, window):
+            if p_ch in m_pat2win:
+                if m_pat2win[p_ch] != w_ch:
+                    matched = False
+                    break
+            elif w_ch in m_win2pat:
+                matched = False
+                break
+            else:
+                m_pat2win[p_ch] = w_ch
+                m_win2pat[w_ch] = p_ch
+        if matched:
+            return True
+    return False
+
+def is_pronounceable(s):
+    name = clean_domain_name(s)
+    if not name.isalpha() or len(name) < 3:
+        return False
+    c_count = 0
+    for ch in name:
+        if ch in VOWELS_SET:
+            c_count = 0
+        else:
+            c_count += 1
+            if c_count >= 3:
+                return False
+    v_count = 0
+    for ch in name:
+        if ch in VOWELS_SET:
+            v_count += 1
+            if v_count >= 3:
+                return False
+        else:
+            v_count = 0
+    return any(ch in VOWELS_SET for ch in name)
+
+def matches_filter(domain, filter_config):
+    """
+    前置精选规则判定引擎 (微秒级内存运算):
+    返回 True 表示符合精选要求（送检网络），返回 False 表示不符合（本地直接跳过）
+    """
+    if not filter_config or not filter_config.get("enabled"):
+        return True
+
+    clean_name = clean_domain_name(domain)
+    if not clean_name:
+        return False
+
+    # 1. 纯净度硬过滤 (排除生僻辅音 q, x, z, v, y)
+    if filter_config.get("clean_only"):
+        if any(ch in RARE_CONSONANTS_SET for ch in clean_name):
+            return False
+
+    # 2. 正则过滤 (如果配置了自定义正则)
+    regex_pat = filter_config.get("regex")
+    if regex_pat:
+        try:
+            if not re.search(regex_pat, clean_name, re.IGNORECASE):
+                return False
+        except Exception:
+            pass
+
+    # 3. 候选特征匹配（以下子规则命中任意一项即算符合，OR 逻辑）
+    rules = filter_config.get("rules", filter_config)
+
+    has_sub_rules = False
+
+    # (a) 对称回文 (如 abba, 12321)
+    if rules.get("palindrome"):
+        has_sub_rules = True
+        if len(clean_name) >= 3 and clean_name == clean_name[::-1]:
+            return True
+
+    # (b) 顺子 (升序/降序)
+    if rules.get("seq") or rules.get("seq_asc") or rules.get("seq_desc"):
+        has_sub_rules = True
+        min_seq = int(rules.get("min_seq_len", 3))
+        if rules.get("seq_asc") and has_sequential(clean_name, min_seq, "asc"):
+            return True
+        if rules.get("seq_desc") and has_sequential(clean_name, min_seq, "desc"):
+            return True
+        if rules.get("seq") and has_sequential(clean_name, min_seq, "any"):
+            return True
+
+    # (c) 经典叠字结构 (AABB / ABAB / ABBA / AAAB / AAAA 等)
+    pats = rules.get("patterns", [])
+    if pats:
+        has_sub_rules = True
+        for p in pats:
+            if match_pattern(clean_name, p):
+                return True
+
+    # (d) 连号 / 豹子 (连续相同字符 >= N，如 AAA)
+    min_repeat = rules.get("min_repeat")
+    if min_repeat and int(min_repeat) >= 2:
+        has_sub_rules = True
+        if has_consecutive_same(clean_name, int(min_repeat)):
+            return True
+
+    # (e) 自然发音 / 可读品牌词
+    if rules.get("pronounceable"):
+        has_sub_rules = True
+        if is_pronounceable(clean_name):
+            return True
+
+    # 如果没有勾选任何细分子规则，只要通过了 clean_only/regex 就允许放行
+    if not has_sub_rules:
+        return True
+
+    return False
 

@@ -502,7 +502,8 @@ def init_db_and_token():
                 ("use_hyphen", "BOOLEAN DEFAULT 0"),
                 ("reset_checkpoint", "BOOLEAN DEFAULT 0"),
                 ("is_aid", "INTEGER DEFAULT 0"),
-                ("parent_task_id", "TEXT DEFAULT NULL")
+                ("parent_task_id", "TEXT DEFAULT NULL"),
+                ("storage_filter", "TEXT DEFAULT NULL")
             ]:
                 if col not in task_cols:
                     try:
@@ -1302,7 +1303,7 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 全局活跃任务列表 (轻量 tasks 表)
                 cur.execute("""
-                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, datetime(t.created_at, '+8 hours') as created_at,
+                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, t.storage_filter, datetime(t.created_at, '+8 hours') as created_at,
                        COUNT(DISTINCT a.id) as total_shards,
                        SUM(CASE WHEN a.status = 'running' THEN 1 ELSE 0 END) as running_shards,
                        SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
@@ -1327,6 +1328,11 @@ class HubHandler(BaseHTTPRequestHandler):
                     item["total"] = tt
                     item["progress_pct"] = min(100.0, round((sc / tt * 100), 1)) if tt > 0 else 0.0
                     item["speed"] = round(item.get("speed", 0.0) or 0.0, 1)
+                    if item.get("storage_filter"):
+                        try:
+                            item["storage_filter"] = json.loads(item["storage_filter"])
+                        except Exception:
+                            pass
                     active_tasks.append(item)
 
                 active_task = active_tasks[0] if active_tasks else None
@@ -1395,7 +1401,7 @@ class HubHandler(BaseHTTPRequestHandler):
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute("""
-                SELECT task_id, mode, suffix, threads, target_nodes, status, datetime(created_at, '+8 hours') as created_at, datetime(updated_at, '+8 hours') as updated_at
+                SELECT task_id, mode, suffix, threads, target_nodes, status, storage_filter, datetime(created_at, '+8 hours') as created_at, datetime(updated_at, '+8 hours') as updated_at
                 FROM tasks
                 WHERE (is_aid = 0 OR is_aid IS NULL)
                 ORDER BY tasks.created_at DESC LIMIT 20;
@@ -1403,6 +1409,11 @@ class HubHandler(BaseHTTPRequestHandler):
                 tasks = []
                 for row in cur.fetchall():
                     t = dict(row)
+                    if t.get("storage_filter"):
+                        try:
+                            t["storage_filter"] = json.loads(t["storage_filter"])
+                        except Exception:
+                            pass
                     cur.execute("""
                     SELECT node_id, shard_num, shard_total, status, scanned, total, speed, available_count, is_aid, aid_for
                     FROM task_assignments WHERE task_id = ? OR parent_task_id = ? ORDER BY id ASC;
@@ -1642,7 +1653,8 @@ class HubHandler(BaseHTTPRequestHandler):
                     cur.execute("""
                     SELECT a.id as assign_id, a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
                            a.start_idx, a.end_idx, a.total as assign_total, a.is_aid, a.aid_for, a.parent_task_id,
-                           t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status
+                           t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status,
+                           t.storage_filter
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
                     WHERE a.node_id = ?
@@ -1663,6 +1675,13 @@ class HubHandler(BaseHTTPRequestHandler):
                     assign_status = assign_row["assign_status"]
                     assign_scanned = assign_row["assign_scanned"] or 0
                     row_keys = assign_row.keys() if hasattr(assign_row, "keys") else []
+
+                    filter_cfg = None
+                    if "storage_filter" in row_keys and assign_row["storage_filter"]:
+                        try:
+                            filter_cfg = json.loads(assign_row["storage_filter"])
+                        except Exception:
+                            filter_cfg = None
 
                     # 1. 任务或当前节点分片已被停止
                     if t_status == "stopped" or assign_status == "stopped":
@@ -1697,7 +1716,8 @@ class HubHandler(BaseHTTPRequestHandler):
                                 "shard_total": assign_row["shard_total"],
                                 "threads": assign_row["threads"],
                                 "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
-                                "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else ""
+                                "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else "",
+                                "storage_filter": filter_cfg
                             }
 
                     # 3. 分片处于 pending 状态，立即下发 START
@@ -1724,7 +1744,8 @@ class HubHandler(BaseHTTPRequestHandler):
                             "shard_total": assign_row["shard_total"],
                             "threads": assign_row["threads"],
                             "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
-                            "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else ""
+                            "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else "",
+                            "storage_filter": filter_cfg
                         }
                         with get_db() as conn:
                             conn.execute("UPDATE task_assignments SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?;", (assign_row["assign_id"],))
@@ -1740,7 +1761,7 @@ class HubHandler(BaseHTTPRequestHandler):
                             cur = conn.cursor()
                             # 查找当前是否有正在运行的根主任务
                             cur.execute("""
-                            SELECT task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads
+                            SELECT task_id, mode, length, use_letters, use_digits, use_hyphen, suffix, threads, storage_filter
                             FROM tasks
                             WHERE status = 'running' AND (is_aid = 0 OR is_aid IS NULL)
                             ORDER BY created_at DESC LIMIT 1;
@@ -1808,17 +1829,17 @@ class HubHandler(BaseHTTPRequestHandler):
                                             INSERT INTO tasks (
                                                 task_id, mode, length, use_letters, use_digits, use_hyphen,
                                                 reset_checkpoint, suffix, threads, target_nodes, status,
-                                                is_aid, parent_task_id
+                                                is_aid, parent_task_id, storage_filter
                                             ) VALUES (
                                                 ?, ?, ?, ?, ?, ?,
                                                 0, ?, ?, ?, 'running',
-                                                1, ?
+                                                1, ?, ?
                                             );
                                             """, (
                                                 aid_task_id, parent_task["mode"], parent_task["length"],
                                                 parent_task["use_letters"], parent_task["use_digits"], parent_task["use_hyphen"],
                                                 parent_task["suffix"], parent_task["threads"], json.dumps([node_id]),
-                                                p_task_id
+                                                p_task_id, parent_task["storage_filter"] if "storage_filter" in parent_task.keys() else None
                                             ))
 
                                             # 3. 记录援助分片到 task_assignments
@@ -1991,6 +2012,9 @@ class HubHandler(BaseHTTPRequestHandler):
             hyphen_suffix = "-" if use_hyphen else ""
             mode = f"{length}{type_name}{hyphen_suffix}"
 
+            storage_filter = data.get("storage_filter")
+            storage_filter_json = json.dumps(storage_filter, ensure_ascii=False) if storage_filter else None
+
             task_id = f"task_{int(datetime.now().timestamp())}_{mode}"
             shard_total = len(selected_nodes)
 
@@ -2016,9 +2040,9 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 创建新任务
                 conn.execute("""
-                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, reset_checkpoint, suffix, threads, target_nodes, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running');
-                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes)))
+                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, reset_checkpoint, suffix, threads, target_nodes, status, storage_filter)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?);
+                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes), storage_filter_json))
 
                 total_all = calc_domain_total(length, use_letters, use_digits, use_hyphen)
                 # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)

@@ -474,6 +474,10 @@
                 class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono task-badge">
                 {{ t.mode }} ({{ t.suffix || 'com' }})
               </span>
+              <span v-if="t.storage_filter && t.storage_filter.enabled"
+                class="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold">
+                🎯 精选先筛后查
+              </span>
               <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono task-nodes">
                 {{ t.running_shards || 0 }}/{{ t.total_shards || 0 }} 节点运行中
               </span>
@@ -985,6 +989,52 @@
             </div>
             <div v-if="dispatchForm.reset_checkpoint" class="text-[10px] text-amber-400/90 bg-amber-950/30 p-2 rounded-lg border border-amber-800/40">
               ⚠️ 风险提示：重跑将强制清空节点本地历史断点，从头重新扫描完整字典。数据库已发现的域名仍将保留并更新时间，不会丢失你的星标收藏。
+            </div>
+          </div>
+
+          <!-- 5. 前置精选排查规则 (极速先筛后查：本地内存毫秒级跳过乱码，仅向网络提交精品) -->
+          <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2.5">
+            <div class="flex items-center justify-between">
+              <label class="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" v-model="dispatchForm.storage_filter.enabled" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                <span class="font-medium text-slate-200">5. 🎯 开启前置精选规则排查</span>
+                <span v-if="dispatchForm.length >= 5" class="text-[10px] bg-indigo-900/60 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-700 font-semibold">长字典极力推荐</span>
+              </label>
+              <div v-if="dispatchForm.storage_filter.enabled" class="flex gap-2">
+                <button type="button" @click="selectAllFilterRules" class="text-[10px] text-indigo-400 hover:text-indigo-300">全选精品</button>
+                <button type="button" @click="resetFilterRules" class="text-[10px] text-slate-500 hover:text-slate-400">清空</button>
+              </div>
+            </div>
+            <div v-if="dispatchForm.storage_filter.enabled" class="space-y-2 pt-1 border-t border-slate-800/80 text-xs">
+              <div class="text-[10px] text-emerald-400 bg-emerald-950/20 p-2 rounded-lg border border-emerald-800/40 leading-relaxed">
+                ⚡ <b>前置先筛后查生效</b>：节点在本地内存纳秒级过筛，<b>仅对命中精选的域名发起网络查询</b>。跳过无用垃圾乱码，杜绝上游限流并节省 98% 流量与磁盘！
+              </div>
+              <div class="grid grid-cols-2 gap-2 text-slate-300">
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.palindrome" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>🔄 对称回文 <span class="text-[10px] text-slate-500 font-mono">(abba / 12321)</span></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.seq" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>📈 顺子/倒顺 <span class="text-[10px] text-slate-500 font-mono">(1234 / abcd)</span></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.has_patterns" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>👥 叠字对子 <span class="text-[10px] text-slate-500 font-mono">(AABB / ABAB)</span></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.has_repeat" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>🐆 连号豹子 <span class="text-[10px] text-slate-500 font-mono">(相同 ≥ 3)</span></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.pronounceable" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>🗣️ 易读品牌词 <span class="text-[10px] text-slate-500 font-mono">(自然发音)</span></span>
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer p-1.5 bg-slate-900/70 rounded-lg border border-slate-800/60 hover:bg-slate-800/50 transition">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.clean_only" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span>✨ 纯净拼音 <span class="text-[10px] text-slate-500 font-mono">(避q,x,z,v,y)</span></span>
+                </label>
+              </div>
             </div>
           </div>
 
@@ -1662,7 +1712,16 @@
           use_hyphen: true,
           reset_checkpoint: false,
           threads: 25,
-          suffix: 'com'
+          suffix: 'com',
+          storage_filter: {
+            enabled: false,
+            palindrome: true,
+            seq: true,
+            has_patterns: true,
+            has_repeat: true,
+            pronounceable: true,
+            clean_only: false
+          }
         });
         const selectedNodeList = ref([]);
 
@@ -1918,6 +1977,32 @@
           }
         };
 
+        const selectAllFilterRules = () => {
+          const sf = dispatchForm.value.storage_filter;
+          sf.palindrome = true;
+          sf.seq = true;
+          sf.has_patterns = true;
+          sf.has_repeat = true;
+          sf.pronounceable = true;
+          sf.clean_only = false;
+        };
+
+        const resetFilterRules = () => {
+          const sf = dispatchForm.value.storage_filter;
+          sf.palindrome = false;
+          sf.seq = false;
+          sf.has_patterns = false;
+          sf.has_repeat = false;
+          sf.pronounceable = false;
+          sf.clean_only = false;
+        };
+
+        watch(() => dispatchForm.value.length, (newLen) => {
+          if (newLen >= 5 && !dispatchForm.value.storage_filter.enabled) {
+            dispatchForm.value.storage_filter.enabled = true;
+          }
+        });
+
         const submitDispatch = async () => {
           const onlineIds = onlineNodes.value.map(n => n.node_id);
           const validSelected = selectedNodeList.value.filter(id => onlineIds.includes(id));
@@ -1929,6 +2014,25 @@
             showToast('请至少勾选字母或数字一种字符');
             return;
           }
+
+          let filterPayload = null;
+          if (dispatchForm.value.storage_filter && dispatchForm.value.storage_filter.enabled) {
+            const sf = dispatchForm.value.storage_filter;
+            const patterns = [];
+            if (sf.has_patterns) {
+              patterns.push('aabb', 'abab', 'abba', 'aaab', 'baaa');
+            }
+            filterPayload = {
+              enabled: true,
+              clean_only: Boolean(sf.clean_only),
+              palindrome: Boolean(sf.palindrome),
+              seq: Boolean(sf.seq),
+              patterns: patterns,
+              min_repeat: sf.has_repeat ? 3 : null,
+              pronounceable: Boolean(sf.pronounceable)
+            };
+          }
+
           dispatching.value = true;
           try {
             const res = await fetch('/api/task/dispatch', {
@@ -1942,7 +2046,8 @@
                 reset_checkpoint: dispatchForm.value.reset_checkpoint,
                 suffix: dispatchForm.value.suffix,
                 threads: dispatchForm.value.threads,
-                nodes: validSelected
+                nodes: validSelected,
+                storage_filter: filterPayload
               })
             });
             const data = await res.json();
@@ -2226,6 +2331,7 @@
           filterPattern, patternOptions, isPronounceable,
           hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList,
+          selectAllFilterRules, resetFilterRules,
           onlineNodes, offlineNodes, toggleSelectAllOnlineNodes, cleanOfflineNodes,
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
           activeAgentTab, isEditingToken, newTokenInput,
