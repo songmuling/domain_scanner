@@ -640,17 +640,39 @@ def compile_template_for_search(pattern_str):
     candidate_modes = []
     if min_len == max_len and min_len in (3, 4, 5, 6):
         l = min_len
-        suffix_hyphen = "-" if has_hyphen else ""
-        if only_digits:
-            candidate_modes.append(f"{l}num{suffix_hyphen}")
-        elif only_letters:
-            candidate_modes.append(f"{l}letter{suffix_hyphen}")
-        else:
-            candidate_modes.append(f"{l}mix{suffix_hyphen}")
-            if not only_digits and not only_letters and has_digits and has_letters:
-                pass
-            else:
-                candidate_modes.extend([f"{l}letter{suffix_hyphen}", f"{l}num{suffix_hyphen}"])
+        # 1. 检查是否存在一种赋值路径使得整个域名为纯字母 (无数字、无连字符)
+        can_be_pure_letters = all(
+            any(all(ch in LETTERS_SET for ch in opt) for opt in slot)
+            for slot in slots
+        )
+        # 2. 检查是否存在一种赋值路径使得整个域名为纯数字 (无字母、无连字符)
+        can_be_pure_digits = all(
+            any(all(ch in DIGITS_SET for ch in opt) for opt in slot)
+            for slot in slots
+        )
+        # 3. 检查是否存在赋值路径使得整个域名同时包含字母与数字 (混合模式)
+        slot_can_letter = any(any(any(ch in LETTERS_SET for ch in opt) for opt in slot) for slot in slots)
+        slot_can_digit = any(any(any(ch in DIGITS_SET for ch in opt) for opt in slot) for slot in slots)
+        can_be_mix = slot_can_letter and slot_can_digit and not (only_letters or only_digits)
+
+        # 4. 连字符检查
+        must_have_hyphen = all(all('-' in opt for opt in slot) for slot in slots)
+        can_have_hyphen = any(any('-' in opt for opt in slot) for slot in slots)
+
+        if can_be_pure_digits and not must_have_hyphen:
+            candidate_modes.append(f"{l}num")
+        if can_be_pure_letters and not must_have_hyphen:
+            candidate_modes.append(f"{l}letter")
+        if can_be_mix and not must_have_hyphen:
+            candidate_modes.append(f"{l}mix")
+
+        if can_have_hyphen:
+            if can_be_pure_digits:
+                candidate_modes.append(f"{l}num-")
+            if can_be_pure_letters:
+                candidate_modes.append(f"{l}letter-")
+            if can_be_mix:
+                candidate_modes.append(f"{l}mix-")
 
     return {
         "regex": regex_full,
