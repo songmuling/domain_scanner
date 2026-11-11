@@ -848,7 +848,7 @@
             </select>
             <select v-model="filterPattern" @change="page = 1; fetchDomains()"
               class="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
-              <option v-for="opt in patternFamilyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
 
@@ -1713,8 +1713,8 @@
           { value: 'desc', label: '↘ 倒序' }
         ];
 
-        const patternFamilyOptions = computed(() => {
-          const lens = filterLengths.value;
+        const patternOptions = computed(() => {
+          const lens = (filterLengths.value || []).map(Number);
           if (lens.length === 1 && lens[0] === 6) {
             return [
               { value: '', label: '不限形态' },
@@ -1751,7 +1751,7 @@
             ];
           }
         });
-        const patternOptions = patternFamilyOptions;
+        const patternFamilyOptions = patternOptions;
 
         const hasActiveFilter = computed(() => {
           return Boolean(
@@ -1791,7 +1791,7 @@
             parts.push(`${filterSeqCount.value}顺(${dirLabel})`);
           }
           if (filterPattern.value) {
-            const patObj = patternOptions.find(p => p.value === filterPattern.value);
+            const patObj = (patternOptions.value || []).find(p => p.value === filterPattern.value);
             if (patObj) parts.push(patObj.label.split(' ')[1] || patObj.label);
           }
           if (isPronounceable.value) parts.push('双拼');
@@ -2491,7 +2491,7 @@
           prefixFilter, suffixFilter, hasVowel, excludeRare, modeOptions,
           onlyStarred, toggleOnlyStarred, filterLengths, filterLetter, filterDigit, filterHyphen,
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,
-          filterPattern, patternOptions, isPronounceable,
+          filterPattern, patternOptions, patternFamilyOptions, isPronounceable,
           hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList,
           selectAllFilterRules, resetFilterRules,
