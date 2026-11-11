@@ -94,6 +94,29 @@ def clean_domain_name(s):
         return ""
     return s.split(".")[0].replace("-", "").lower()
 
+def derive_domain_mode(domain):
+    """
+    严格按照域名主体(slug)总长度(包含连字符)推导标准模式:
+    - a-b.com  -> 前缀 'a-b' 长度为 3，纯字母+连字符 -> 3letter-
+    - ac-w.com -> 前缀 'ac-w' 长度为 4，纯字母+连字符 -> 4letter-
+    - 1-46.com -> 前缀 '1-46' 长度为 4，纯数字+连字符 -> 4num-
+    - aa-1.com -> 前缀 'aa-1' 长度为 4，字母+数字+连字符 -> 4mix-
+    - 1234.com -> 前缀 '1234' 长度为 4，纯数字 -> 4num
+    """
+    if not domain:
+        return "4letter"
+    slug = domain.split(".")[0].lower()
+    has_hyphen = "-" in slug
+    chars_only = slug.replace("-", "")
+    L = len(slug)
+    if chars_only.isdigit():
+        c_type = "num"
+    elif chars_only.isalpha():
+        c_type = "letter"
+    else:
+        c_type = "mix"
+    return f"{L}{c_type}{'-' if has_hyphen else ''}"
+
 VOWELS_SET = set("aeiou")
 RARE_CONSONANTS_SET = set("qxzvy")
 
@@ -1930,11 +1953,8 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         if not d_name:
                             continue
-                        # 严格推导并纠正真实标准 mode，杜绝任何上报源 mode 错位
-                        clean_name = clean_domain_name(d_name)
-                        c_type = "num" if clean_name.isdigit() else ("letter" if clean_name.isalpha() else "mix")
-                        c_hyphen = "-" if "-" in d_name.split('.')[0] else ""
-                        d_mode = f"{len(clean_name)}{c_type}{c_hyphen}"
+                        # 严格推导并纠正真实标准 mode，杜绝任何上报源 mode 错位 (主体总长度严格包含连字符)
+                        d_mode = derive_domain_mode(d_name)
                         feats = analyze_domain_features(d_name)
                         try:
                             conn.execute("""
@@ -2281,11 +2301,8 @@ class HubHandler(BaseHTTPRequestHandler):
 
             is_starred = 1 if data.get("starred", 1) in (1, "1", True) else 0
 
-            # 推导标准特征与 mode
-            clean_name = clean_domain_name(target_domain)
-            c_type = "num" if clean_name.isdigit() else ("letter" if clean_name.isalpha() else "mix")
-            c_hyphen = "-" if "-" in clean_name else ""
-            mode_val = f"{len(clean_name)}{c_type}{c_hyphen}"
+            # 推导标准特征与 mode (主体总长度严格包含连字符)
+            mode_val = derive_domain_mode(target_domain)
             feats = analyze_domain_features(target_domain)
 
             with DB_LOCK:

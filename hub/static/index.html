@@ -2117,7 +2117,13 @@
         };
 
         watch(() => dispatchForm.value.length, (newLen) => {
-          if (newLen >= 5 && !dispatchForm.value.storage_filter.enabled) {
+          if (newLen >= 5) {
+            dispatchForm.value.storage_filter.enabled = true;
+          }
+        });
+
+        watch(openDispatchModal, (isOpen) => {
+          if (isOpen && dispatchForm.value.length >= 5) {
             dispatchForm.value.storage_filter.enabled = true;
           }
         });
