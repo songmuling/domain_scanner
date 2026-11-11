@@ -379,7 +379,7 @@ def clean_domain_name(s):
         return ""
     return s.split(".")[0].replace("-", "").lower()
 
-def has_consecutive_same(s, n):
+def has_consecutive_same(s, n=3, strict=True):
     name = clean_domain_name(s)
     if not name or not n:
         return False
@@ -387,12 +387,22 @@ def has_consecutive_same(s, n):
         n = int(n)
     except Exception:
         return False
-    if n < 2 or len(name) < n:
+    L = len(name)
+    if n < 2 or L < n:
         return False
+
+    # 对于长词 (>=5)：若为 3 连号，必须在首部 (如 888xxx) 或尾部 (如 xxx888)；
+    # 若在词中间出现，则要求至少连续 4 个相同 (如 x8888x) 才有收藏价值，避免 481119 这种乱码
+    if strict and L >= 5 and n <= 3:
+        if len(set(name[:3])) == 1 or len(set(name[-3:])) == 1:
+            return True
+        pattern = r"([a-z0-9])\1{3,}"
+        return bool(re.search(pattern, name))
+
     pattern = r"([a-z0-9])\1{" + str(n - 1) + ",}"
     return bool(re.search(pattern, name))
 
-def has_sequential(s, n=3, direction="any"):
+def has_sequential(s, n=3, direction="any", strict=True):
     name = clean_domain_name(s)
     if not name or not n:
         return False
@@ -400,21 +410,32 @@ def has_sequential(s, n=3, direction="any"):
         n = int(n)
     except Exception:
         return False
-    if n < 2 or len(name) < n:
+    L = len(name)
+    if n < 2 or L < n:
         return False
+
+    req_len = n
+    # 对于 5 位及以上较长域名，自适应提升顺子判定门槛，杜绝 812395 这种中间偶发 3 位小片段的乱码
+    if strict and L >= 5 and req_len <= 3:
+        req_len = 4
 
     check_asc = direction in ("asc", "any")
     check_desc = direction in ("desc", "any")
 
-    for i in range(len(name) - n + 1):
-        sub = name[i:i + n]
-        if check_asc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) + 1 == ord(sub[j + 1]) for j in range(n - 1)):
+    if strict and L >= 5:
+        # 首尾锚定或全词顺子 (例如 1234xx, xx1234, 123456)
+        windows = [name[:req_len], name[-req_len:]]
+    else:
+        windows = [name[i:i + req_len] for i in range(L - req_len + 1)]
+
+    for sub in windows:
+        if check_asc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) + 1 == ord(sub[j + 1]) for j in range(len(sub) - 1)):
             return True
-        if check_desc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) - 1 == ord(sub[j + 1]) for j in range(n - 1)):
+        if check_desc and (sub.isalpha() or sub.isdigit()) and all(ord(sub[j]) - 1 == ord(sub[j + 1]) for j in range(len(sub) - 1)):
             return True
     return False
 
-def match_pattern(s, pat):
+def match_pattern(s, pat, strict=True):
     name = clean_domain_name(s)
     if not name or not pat:
         return False
@@ -423,11 +444,19 @@ def match_pattern(s, pat):
         return len(name) >= 3 and name == name[::-1]
 
     plen = len(pat)
-    if len(name) < plen:
+    L = len(name)
+    if L < plen:
         return False
 
-    for i in range(len(name) - plen + 1):
-        window = name[i:i + plen]
+    if L == plen:
+        windows = [name]
+    elif strict and L >= 5:
+        # 5位以上精选词：必须是头部对子 (AABBxx) 或尾部对子 (xxAABB)，不能在内部游离匹配
+        windows = [name[:plen], name[-plen:]]
+    else:
+        windows = [name[i:i + plen] for i in range(L - plen + 1)]
+
+    for window in windows:
         m_pat2win = {}
         m_win2pat = {}
         matched = True
@@ -496,6 +525,7 @@ def matches_filter(domain, filter_config):
 
     # 3. 候选特征匹配（以下子规则命中任意一项即算符合，OR 逻辑）
     rules = filter_config.get("rules", filter_config)
+    strict = rules.get("strict", True)
 
     has_sub_rules = False
 
@@ -509,11 +539,11 @@ def matches_filter(domain, filter_config):
     if rules.get("seq") or rules.get("seq_asc") or rules.get("seq_desc"):
         has_sub_rules = True
         min_seq = int(rules.get("min_seq_len", 3))
-        if rules.get("seq_asc") and has_sequential(clean_name, min_seq, "asc"):
+        if rules.get("seq_asc") and has_sequential(clean_name, min_seq, "asc", strict=strict):
             return True
-        if rules.get("seq_desc") and has_sequential(clean_name, min_seq, "desc"):
+        if rules.get("seq_desc") and has_sequential(clean_name, min_seq, "desc", strict=strict):
             return True
-        if rules.get("seq") and has_sequential(clean_name, min_seq, "any"):
+        if rules.get("seq") and has_sequential(clean_name, min_seq, "any", strict=strict):
             return True
 
     # (c) 经典叠字结构 (AABB / ABAB / ABBA / AAAB / AAAA 等)
@@ -521,14 +551,14 @@ def matches_filter(domain, filter_config):
     if pats:
         has_sub_rules = True
         for p in pats:
-            if match_pattern(clean_name, p):
+            if match_pattern(clean_name, p, strict=strict):
                 return True
 
     # (d) 连号 / 豹子 (连续相同字符 >= N，如 AAA)
     min_repeat = rules.get("min_repeat")
     if min_repeat and int(min_repeat) >= 2:
         has_sub_rules = True
-        if has_consecutive_same(clean_name, int(min_repeat)):
+        if has_consecutive_same(clean_name, int(min_repeat), strict=strict):
             return True
 
     # (e) 自然发音 / 可读品牌词
