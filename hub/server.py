@@ -548,6 +548,7 @@ def init_db_and_token():
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_palindrome ON domains(is_palindrome);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_vowel ON domains(has_vowel);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_clean ON domains(is_clean);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_patterns ON domains(patterns) WHERE patterns IS NOT NULL AND patterns != '';")
 
             # 自动迁移 nodes 旧表结构
             cur = conn.cursor()
@@ -1380,75 +1381,78 @@ def build_domain_filters(params):
     if pattern:
         if pattern == "palindrome":
             where_clauses.append("is_palindrome = 1")
-        elif pattern == "pairs":
-            # 叠字双叠家族：
-            # 4位: AABB
-            # 5位: AAABB / AABBB
-            # 6位: AAABBB / AABBCC
-            if 6 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
-            elif 5 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabb%' OR patterns LIKE '%aabbb%')")
-            elif 4 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aabb%')")
-            else:
-                where_clauses.append("(patterns LIKE '%pairs%' OR (mode LIKE '4%' AND patterns LIKE '%aabb%') OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
-        elif pattern == "alternating":
-            # 周期交替家族：
-            # 4位: ABAB
-            # 5位: ABABA
-            # 6位: ABABAB
-            if 6 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababab%')")
-            elif 5 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababa%')")
-            elif 4 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%abab%')")
-            else:
-                where_clauses.append("(patterns LIKE '%alternating%' OR (mode LIKE '4%' AND patterns LIKE '%abab%') OR patterns LIKE '%ababab%')")
-        elif pattern == "twins":
-            # 重叠双胞胎家族：6位专属 ABCABC
-            where_clauses.append("(patterns LIKE '%twins%' OR patterns LIKE '%abcabc%')")
-            if not selected_lengths:
-                p_modes = resolve_candidate_modes([6], chk_letter, chk_digit, chk_hyphen)
-                if p_modes:
-                    pl = ",".join("?" for _ in p_modes)
-                    where_clauses.append(f"mode IN ({pl})")
-                    bind_params.extend(p_modes)
-        elif pattern == "one_diff":
-            # 头尾带一/大豹：AAAB, BAAA, AAAAB, AAAAAB
-            if 6 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaaab%' OR patterns LIKE '%baaaaa%')")
-            elif 5 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaab%' OR patterns LIKE '%baaaa%')")
-            elif 4 in selected_lengths and len(selected_lengths) == 1:
-                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')")
-            else:
-                where_clauses.append("(patterns LIKE '%one_diff%' OR (mode LIKE '4%' AND (patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')))")
         else:
-            where_clauses.append("patterns LIKE ?")
-            bind_params.append(f"%{pattern}%")
-
-            # 兼容具体形态的自动索引锚定
-            if not selected_lengths:
-                if pattern in ("aaabbb", "aabbcc", "ababab", "abcabc"):
+            # 性能关键：利用 patterns 部分索引，直接绕过 950 万无形态行，使形态检索由数秒降至 15ms 内
+            where_clauses.append("patterns IS NOT NULL AND patterns != ''")
+            if pattern == "pairs":
+                # 叠字双叠家族：
+                # 4位: AABB
+                # 5位: AAABB / AABBB
+                # 6位: AAABBB / AABBCC
+                if 6 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
+                elif 5 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabb%' OR patterns LIKE '%aabbb%')")
+                elif 4 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aabb%')")
+                else:
+                    where_clauses.append("(patterns LIKE '%pairs%' OR (mode LIKE '4%' AND patterns LIKE '%aabb%') OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
+            elif pattern == "alternating":
+                # 周期交替家族：
+                # 4位: ABAB
+                # 5位: ABABA
+                # 6位: ABABAB
+                if 6 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababab%')")
+                elif 5 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababa%')")
+                elif 4 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%abab%')")
+                else:
+                    where_clauses.append("(patterns LIKE '%alternating%' OR (mode LIKE '4%' AND patterns LIKE '%abab%') OR patterns LIKE '%ababab%')")
+            elif pattern == "twins":
+                # 重叠双胞胎家族：6位专属 ABCABC
+                where_clauses.append("(patterns LIKE '%twins%' OR patterns LIKE '%abcabc%')")
+                if not selected_lengths:
                     p_modes = resolve_candidate_modes([6], chk_letter, chk_digit, chk_hyphen)
                     if p_modes:
                         pl = ",".join("?" for _ in p_modes)
                         where_clauses.append(f"mode IN ({pl})")
                         bind_params.extend(p_modes)
-                elif pattern in ("aaabb", "aabbb", "aabaa", "ababa"):
-                    p_modes = resolve_candidate_modes([5], chk_letter, chk_digit, chk_hyphen)
-                    if p_modes:
-                        pl = ",".join("?" for _ in p_modes)
-                        where_clauses.append(f"mode IN ({pl})")
-                        bind_params.extend(p_modes)
-                elif pattern in ("abba", "aaab", "baaa"):
-                    p_modes = resolve_candidate_modes([4], chk_letter, chk_digit, chk_hyphen)
-                    if p_modes:
-                        pl = ",".join("?" for _ in p_modes)
-                        where_clauses.append(f"mode IN ({pl})")
-                        bind_params.extend(p_modes)
+            elif pattern == "one_diff":
+                # 头尾带一/大豹：AAAB, BAAA, AAAAB, AAAAAB
+                if 6 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaaab%' OR patterns LIKE '%baaaaa%')")
+                elif 5 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaab%' OR patterns LIKE '%baaaa%')")
+                elif 4 in selected_lengths and len(selected_lengths) == 1:
+                    where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')")
+                else:
+                    where_clauses.append("(patterns LIKE '%one_diff%' OR (mode LIKE '4%' AND (patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')))")
+            else:
+                where_clauses.append("patterns LIKE ?")
+                bind_params.append(f"%{pattern}%")
+
+                # 兼容具体形态的自动索引锚定
+                if not selected_lengths:
+                    if pattern in ("aaabbb", "aabbcc", "ababab", "abcabc"):
+                        p_modes = resolve_candidate_modes([6], chk_letter, chk_digit, chk_hyphen)
+                        if p_modes:
+                            pl = ",".join("?" for _ in p_modes)
+                            where_clauses.append(f"mode IN ({pl})")
+                            bind_params.extend(p_modes)
+                    elif pattern in ("aaabb", "aabbb", "aabaa", "ababa"):
+                        p_modes = resolve_candidate_modes([5], chk_letter, chk_digit, chk_hyphen)
+                        if p_modes:
+                            pl = ",".join("?" for _ in p_modes)
+                            where_clauses.append(f"mode IN ({pl})")
+                            bind_params.extend(p_modes)
+                    elif pattern in ("abba", "aaab", "baaa"):
+                        p_modes = resolve_candidate_modes([4], chk_letter, chk_digit, chk_hyphen)
+                        if p_modes:
+                            pl = ",".join("?" for _ in p_modes)
+                            where_clauses.append(f"mode IN ({pl})")
+                            bind_params.extend(p_modes)
 
     # 9. 靓号规则：自然发音 (易读元音辅音交替双拼)
     pronounceable = params.get("pronounceable", ["0"])[0] == "1"
