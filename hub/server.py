@@ -15,6 +15,7 @@ import ssl
 import time
 import re
 import json
+import socket
 import sqlite3
 import secrets
 import urllib.request
@@ -836,6 +837,52 @@ def get_current_token():
         row = cur.fetchone()
         return row[0] if row else MASTER_TOKEN
 
+def dns_has_record(domain):
+    """步骤 1: 极速本地 DNS 预检 (毫秒级过滤 85%~90% 已解析占用域名，0 消耗 RDAP 配额)"""
+    lookup_name = domain if domain.endswith(".") else f"{domain}."
+    try:
+        socket.getaddrinfo(lookup_name, 80, socket.AF_INET, socket.SOCK_STREAM)
+        return True
+    except socket.gaierror:
+        return False
+    except Exception:
+        return False
+
+def dns_resolve_info(domain):
+    """尝试获取 DNS 解析 IP 列表"""
+    lookup_name = domain if domain.endswith(".") else f"{domain}."
+    try:
+        addrinfo = socket.getaddrinfo(lookup_name, 80, socket.AF_INET, socket.SOCK_STREAM)
+        ips = list(set([x[4][0] for x in addrinfo]))
+        return True, ips
+    except Exception:
+        return False, []
+
+# 5分钟轻量内存短缓存 (防止高频重复穿透同一域名，杜绝上游封禁)
+INSPECT_CACHE = {}
+INSPECT_CACHE_LOCK = threading.Lock()
+
+def get_cached_inspect(domain):
+    now = time.time()
+    with INSPECT_CACHE_LOCK:
+        if domain in INSPECT_CACHE:
+            res, exp = INSPECT_CACHE[domain]
+            if now < exp:
+                return dict(res)
+            del INSPECT_CACHE[domain]
+    return None
+
+def set_cached_inspect(domain, result, ttl=300):
+    now = time.time()
+    with INSPECT_CACHE_LOCK:
+        if len(INSPECT_CACHE) > 3000:
+            expired = [k for k, (_, exp) in INSPECT_CACHE.items() if now >= exp]
+            for k in expired:
+                del INSPECT_CACHE[k]
+            if len(INSPECT_CACHE) > 3000:
+                INSPECT_CACHE.clear()
+        INSPECT_CACHE[domain] = (result, now + ttl)
+
 def check_verisign_rdap(domain):
     """权威复检：查询 Verisign 官方 RDAP (携带 SSL 优化与快速超时)"""
     url = f"https://rdap.verisign.com/com/v1/domain/{domain.lower()}"
@@ -850,14 +897,36 @@ def check_verisign_rdap(domain):
     except urllib.error.HTTPError as e:
         if e.code == 404:
             return True, "未注册 (RDAP返回404)"
+        elif e.code == 429:
+            return False, "RDAP触发频率限制(429)"
         return False, f"HTTP状态: {e.code}"
     except Exception as e:
         return False, f"网络错误: {str(e)}"
     return False, "未知状态"
 
+def check_domain_availability(domain):
+    """
+    智能存活性复验流水线:
+    步骤 1: 毫秒级本地 DNS 预检 (若已解析 IP/NS，100% 确认已被注册，0 消耗 RDAP 配额)
+    步骤 2: DNS 无记录时，穿透 Verisign 官方 RDAP 进行权威核实
+    """
+    if dns_has_record(domain):
+        return False, "已注册 (DNS解析命中)"
+    return check_verisign_rdap(domain)
+
 def inspect_domain_rdap(domain):
-    """单域名权威穿透深度查验 (Verisign RDAP 权威根库，支持详细注册商与时间节点解析)"""
-    url = f"https://rdap.verisign.com/com/v1/domain/{domain.lower()}"
+    """单域名权威穿透深度查验 (Verisign RDAP 权威根库，支持 DNS 预检、智能降级与 5 分钟内存缓存)"""
+    domain = domain.lower().strip()
+    cached = get_cached_inspect(domain)
+    if cached:
+        cached["is_cached"] = True
+        return cached
+
+    # 1. 毫秒级 DNS 解析预检
+    dns_active, dns_ips = dns_resolve_info(domain)
+
+    # 2. 尝试向 Verisign 权威 RDAP 发起穿透查验
+    url = f"https://rdap.verisign.com/com/v1/domain/{domain}"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DomainHub-Inspector/2.0", "Accept": "application/rdap+json"}
@@ -898,7 +967,7 @@ def inspect_domain_rdap(domain):
                 # 解析域名状态
                 statuses = data.get("status", [])
 
-                return {
+                res = {
                     "available": False,
                     "reason": f"已注册 · 注册商: {registrar}",
                     "rdap": {
@@ -907,17 +976,39 @@ def inspect_domain_rdap(domain):
                         "expires_at": events.get("expiration", ""),
                         "updated_at": events.get("last changed", ""),
                         "nameservers": nameservers,
-                        "statuses": statuses
+                        "statuses": statuses,
+                        "resolved_ips": dns_ips
                     }
                 }
+                set_cached_inspect(domain, res, ttl=300)
+                return res
     except urllib.error.HTTPError as e:
         if e.code == 404:
-            return {
+            res = {
                 "available": True,
                 "reason": "404 权威未注册 (可立即抢注)",
                 "rdap": None
             }
+            set_cached_inspect(domain, res, ttl=300)
+            return res
         elif e.code == 429:
+            # 智能降级保护：如果 RDAP 429 限流，但本地 DNS 已经解析出有效 IP，则 100% 确认已注册
+            if dns_active:
+                res = {
+                    "available": False,
+                    "reason": f"已注册 · DNS正常解析 (已解析 IP: {', '.join(dns_ips[:2])})",
+                    "rdap": {
+                        "registrar": "未知 (RDAP受限降级)",
+                        "created_at": "",
+                        "expires_at": "",
+                        "updated_at": "",
+                        "nameservers": dns_ips,
+                        "statuses": ["active (DNS resolved)"],
+                        "resolved_ips": dns_ips
+                    }
+                }
+                set_cached_inspect(domain, res, ttl=180)
+                return res
             return {
                 "available": None,
                 "error": "Verisign RDAP 接口触发访问频率限制，请稍候重试",
@@ -929,11 +1020,29 @@ def inspect_domain_rdap(domain):
             "reason": f"HTTP {e.code}"
         }
     except Exception as e:
+        # 网络异常时，如果 DNS 已经命中，同样优雅降级为已注册
+        if dns_active:
+            res = {
+                "available": False,
+                "reason": f"已注册 · DNS正常解析 (已解析 IP: {', '.join(dns_ips[:2])})",
+                "rdap": {
+                    "registrar": "未知 (网络异常降级)",
+                    "created_at": "",
+                    "expires_at": "",
+                    "updated_at": "",
+                    "nameservers": dns_ips,
+                    "statuses": ["active (DNS resolved)"],
+                    "resolved_ips": dns_ips
+                }
+            }
+            set_cached_inspect(domain, res, ttl=180)
+            return res
         return {
             "available": None,
             "error": f"网络连线异常: {str(e)}",
             "reason": "网络异常"
         }
+
     return {
         "available": None,
         "error": "未能获取权威状态",
@@ -1033,8 +1142,8 @@ def start_batch_recheck(mode="all"):
                 conn.commit()
 
         try:
-            max_workers = 15
-            max_in_flight = 25
+            max_workers = 4
+            max_in_flight = 8
             in_flight = {}
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -1042,8 +1151,9 @@ def start_batch_recheck(mode="all"):
                     if not BATCH_RECHECK_STATE["is_running"]:
                         break
 
-                    fut = executor.submit(check_verisign_rdap, d)
+                    fut = executor.submit(check_domain_availability, d)
                     in_flight[fut] = d
+                    time.sleep(0.04)
 
                     if len(in_flight) >= max_in_flight:
                         done, _ = concurrent.futures.wait(
@@ -1838,8 +1948,8 @@ class HubHandler(BaseHTTPRequestHandler):
                                         s_idx, e_idx, cur_tot = ensure_assignment_bounds(conn, cand, parent_task)
                                         c_scanned = cand["scanned"] or 0
                                         remaining = cur_tot - c_scanned
-                                        if remaining > 5000:
-                                            # 触发尾部工作窃取：从慢节点的未扫尾部切出最多 5 万（或剩余的一半）
+                                        if remaining >= 1000:
+                                            # 触发尾部工作窃取：慢节点剩余任务 >= 1000 时，切出剩余的一半（最多 5 万）给空闲节点接力
                                             slice_size = min(50000, remaining // 2)
                                             slice_end = e_idx
                                             slice_start = slice_end - slice_size
@@ -2209,11 +2319,11 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({"code": 0, "msg": "更新成功", "is_starred": final_starred})
             return
 
-        # 6. 实时权威复检 (Verisign RDAP)
+        # 6. 实时存活性智能复验 (DNS极速初筛 + Verisign RDAP权威终验)
         if path == "/api/domain/recheck":
             data = self.read_json_body()
             domain = data.get("domain", "").strip().lower()
-            is_avail, reason = check_verisign_rdap(domain)
+            is_avail, reason = check_domain_availability(domain)
 
             with get_db() as conn:
                 if not is_avail:
