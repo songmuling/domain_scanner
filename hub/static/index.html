@@ -2307,6 +2307,7 @@
           }
         });
         const selectedNodeList = ref([]);
+        const hasInitializedSelectedNodes = ref(false);
 
         const openBatchRecheckModal = ref(false);
         const batchRecheckScope = ref('all');
@@ -2507,8 +2508,9 @@
             if (data.code === 0) {
               nodes.value = data.data;
               const onlineIds = nodes.value.filter(n => n.status !== 'offline').map(n => n.node_id);
-              if (selectedNodeList.value.length === 0) {
+              if (!hasInitializedSelectedNodes.value && onlineIds.length > 0) {
                 selectedNodeList.value = [...onlineIds];
+                hasInitializedSelectedNodes.value = true;
               } else {
                 selectedNodeList.value = selectedNodeList.value.filter(id => onlineIds.includes(id));
               }
@@ -2685,6 +2687,7 @@
             if (data.code === 0) {
               showToast(data.msg);
               openDispatchModal.value = false;
+              hasInitializedSelectedNodes.value = false;
               fetchStats();
               fetchNodes();
             } else {
