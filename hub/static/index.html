@@ -1034,7 +1034,6 @@
 
     <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher - 自由定义位数与规则) -->
     <div v-if="openDispatchModal"
-      @click.self="openDispatchModal = false"
       class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
         <!-- 固定顶部标题栏 -->
@@ -1629,7 +1628,6 @@
 
     <!-- 模态框 4：单域名权威深度即验 (形态 A 浮层面板) -->
     <div v-if="showInspectorModal"
-      @click.self="closeInspectorModal"
       class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div class="inspector-modal-card bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl flex flex-col my-auto overflow-hidden animate-fade-in">
 
