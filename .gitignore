@@ -29,7 +29,11 @@ scan.log
 *.log
 
 # Checkpoints & runtime states
-checkpoint*.json
+checkpoint*.json*
+*.bak
+*.tmp
+agent/checkpoints/
+checkpoints/
 config.json
 .agent_uuid
 *.uuid

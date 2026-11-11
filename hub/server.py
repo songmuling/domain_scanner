@@ -398,14 +398,20 @@ def init_db_and_token():
             );
             """)
 
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_mode ON domains(mode);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status ON domains(status);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_created ON domains(created_at);")
             # 极速复合索引：直击高频列表与分页查询，彻底消除百万级全表排序
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status_created ON domains(status, created_at DESC);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_starred_created ON domains(is_starred, created_at DESC);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_mode_status_created ON domains(mode, status, created_at DESC);")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_status_mode ON domains(status, mode);")
+
+            # 清理历史冗余重复索引 (已由高质量复合索引覆盖，立省 1GB+ 磁盘空间)
+            for old_idx in [
+                "idx_domains_mode",
+                "idx_domains_status",
+                "idx_domains_created",
+                "idx_domains_status_mode",
+                "idx_domains_starred"
+            ]:
+                conn.execute(f"DROP INDEX IF EXISTS {old_idx};")
 
             # FTS5 Trigram 全文检索虚拟表 (外部内容表模式，仅存倒排三元索引，磁盘零冗余)
             conn.execute("""
@@ -438,7 +444,6 @@ def init_db_and_token():
                     conn.execute("UPDATE domains SET status = 'available' WHERE status IN ('purchased', 'discarded');")
                 except Exception:
                     pass
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_domains_starred ON domains(is_starred);")
 
             feature_cols = [
                 ("max_repeat", "INTEGER DEFAULT NULL"),
@@ -722,10 +727,11 @@ def start_stats_aggregator_worker():
                     """)
                     c_row = cur.fetchone()
 
-                    cur.execute("SELECT COUNT(*) FROM domains WHERE created_at >= datetime(date('now', '+8 hours'), '-8 hours');")
+                    # 走 idx_domains_status_created 覆盖二分检索
+                    cur.execute("SELECT COUNT(*) FROM domains WHERE status = 'available' AND created_at >= datetime(date('now', '+8 hours'), '-8 hours');")
                     t_found = cur.fetchone()[0]
 
-                    # 走 idx_domains_status_mode 覆盖索引快速分组
+                    # 走 idx_domains_mode_status_created 覆盖索引快速分组
                     cur.execute("SELECT mode, COUNT(*) as cnt FROM domains WHERE status = 'available' GROUP BY mode;")
                     m_stats = {row["mode"] or "unknown": row["cnt"] for row in cur.fetchall()}
 

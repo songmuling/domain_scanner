@@ -23,7 +23,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1111.1020"
+AGENT_VERSION = "26.1111.1052"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -153,20 +153,34 @@ class ScanWorker:
             self.end_idx = end_idx
             self.total = end_idx - start_idx
 
-        # 断点存盘与重跑逻辑
+        # 断点存盘与重跑逻辑 (统一收纳在 checkpoints/ 子目录，避免污染根目录)
         if self.is_aid:
             clean_shard = f"aid_{self.task_id}_{start_idx}_{end_idx}"
         else:
             clean_shard = canonical_shard.replace("/", "_")
-        ckpt_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
+        ckpt_dir = os.path.join(SCRIPT_DIR, "checkpoints")
+        os.makedirs(ckpt_dir, exist_ok=True)
+        ckpt_file = os.path.join(ckpt_dir, f"checkpoint_{self.mode}_{clean_shard}.json")
+        legacy_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
+        # 兼容读取旧根目录断点（如果存在则自动迁入新目录）
+        if not os.path.exists(ckpt_file) and os.path.exists(legacy_file):
+            try:
+                import shutil
+                shutil.move(legacy_file, ckpt_file)
+                if os.path.exists(legacy_file + ".bak"):
+                    shutil.move(legacy_file + ".bak", ckpt_file + ".bak")
+            except Exception:
+                pass
 
         reset_ckpt = bool(self.task_info.get("reset_checkpoint", False))
-        if reset_ckpt and os.path.exists(ckpt_file):
-            try:
-                os.remove(ckpt_file)
-                print(f"\n[*] 收到强制从头重跑指令，已重置本地历史断点: {ckpt_file}")
-            except Exception as e:
-                print(f"[!] 清除断点失败: {e}")
+        if reset_ckpt:
+            for p in [ckpt_file, ckpt_file + ".bak", legacy_file, legacy_file + ".bak"]:
+                if os.path.exists(p):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            print(f"\n[*] 收到强制从头重跑指令，已重置本地历史断点: {ckpt_file}")
             last_ckpt = ""
             self.checked_count = 0
             self.found_count = 0
@@ -274,6 +288,13 @@ class ScanWorker:
             if not self.stop_requested:
                 self.is_completed = True
                 print(f"\n[🎉 扫描完成] 任务 {self.task_id} 分片 {canonical_shard} 已全量扫描完毕！共核查 {self.checked_count:,} 个，命中可用域名 {self.found_count} 个")
+                # 扫描 100% 全量完成后，自动销毁断点及备份文件，杜绝历史文件堆积
+                for fpath in [ckpt_file, ckpt_file + ".bak", ckpt_file + ".tmp", legacy_file, legacy_file + ".bak"]:
+                    if os.path.exists(fpath):
+                        try:
+                            os.remove(fpath)
+                        except Exception:
+                            pass
             else:
                 print(f"\n[*] 任务 {self.task_id} 工作线程已停止。当前核查进度 {self.checked_count:,} / {self.total:,}")
 
