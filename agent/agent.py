@@ -23,7 +23,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1111.1144"
+AGENT_VERSION = "26.1111.1547"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -128,16 +128,21 @@ class ScanWorker:
         self.stop_requested = True
 
     def _run(self):
-        # 解析任务规则 (支持全自定义规则与旧版模式名称)
-        if "length" in self.task_info:
+        # 解析任务规则 (支持定向模板模式、全自定义规则与旧版模式名称)
+        is_template = (self.task_info.get("task_type") == "template") or bool(self.task_info.get("template"))
+        if is_template:
+            template_str = self.task_info["template"].strip()
+            slots, total_all = scanner.parse_template(template_str)
+            print(f"[*] 🎯 启动定向模板扫描模式: {template_str} (总组合数: {total_all:,})")
+        elif "length" in self.task_info:
             length = int(self.task_info["length"])
             use_letters = bool(self.task_info.get("use_letters", True))
             use_digits = bool(self.task_info.get("use_digits", False))
             use_hyphen = bool(self.task_info.get("use_hyphen", False))
+            total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
         else:
             length, use_letters, use_digits, use_hyphen = scanner.parse_mode_string(self.mode)
-
-        total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
+            total_all = scanner.calc_total(length, use_letters, use_digits, use_hyphen)
 
         self.filter_config = self.task_info.get("storage_filter") or None
         if self.filter_config and self.filter_config.get("enabled"):
@@ -164,8 +169,9 @@ class ScanWorker:
             clean_shard = canonical_shard.replace("/", "_")
         ckpt_dir = os.path.join(SCRIPT_DIR, "checkpoints")
         os.makedirs(ckpt_dir, exist_ok=True)
-        ckpt_file = os.path.join(ckpt_dir, f"checkpoint_{self.mode}_{clean_shard}.json")
-        legacy_file = os.path.join(SCRIPT_DIR, f"checkpoint_{self.mode}_{clean_shard}.json")
+        safe_mode = re.sub(r'[^a-zA-Z0-9_\-]', '_', self.mode)
+        ckpt_file = os.path.join(ckpt_dir, f"checkpoint_{safe_mode}_{clean_shard}.json")
+        legacy_file = os.path.join(SCRIPT_DIR, f"checkpoint_{safe_mode}_{clean_shard}.json")
         # 兼容读取旧根目录断点（如果存在则自动迁入新目录）
         if not os.path.exists(ckpt_file) and os.path.exists(legacy_file):
             try:
@@ -204,7 +210,10 @@ class ScanWorker:
                         d, r = str(item), "404 未注册"
                     self.hub.report_domain(d, self.mode, r)
 
-        generator = scanner.get_range_generator(length, use_letters, use_digits, use_hyphen, self.suffix, start_idx, end_idx)
+        if is_template:
+            generator = scanner.get_template_range_generator(template_str, self.suffix, start_idx, end_idx)
+        else:
+            generator = scanner.get_range_generator(length, use_letters, use_digits, use_hyphen, self.suffix, start_idx, end_idx)
         skipping = bool(last_ckpt)
 
         start_time = time.time()

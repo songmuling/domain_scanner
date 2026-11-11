@@ -60,6 +60,154 @@ def calc_domain_total(length, use_letters=True, use_digits=False, use_hyphen=Fal
     else:
         return pool_len ** length
 
+VOWELS_LIST = list("aeiou")
+CONSONANTS_LIST = list("bcdfghjklmnpqrstvwxyz")
+LETTERS_LIST = list("abcdefghijklmnopqrstuvwxyz")
+DIGITS_LIST = list("0123456789")
+ALPHANUM_LIST = LETTERS_LIST + DIGITS_LIST
+
+def parse_template(pattern_str):
+    """
+    将用户模板字符串解析为 slots 列表与笛卡尔积总数
+    支持：
+    1. 占位符: L/?l(字母26), D/?d(数字10), V/?v(元音5), C/?c(辅音21), */?*(任意36)
+    2. 方括号集: [abc], [a-z], [0-9]
+    3. 重复量词: L{2}, D{3}, [a-z]{2}
+    4. 分支选择: (88|66|99|vip)
+    5. 固定字面量: 888, vip, ai, - 等
+    """
+    s = pattern_str.strip()
+    if not s:
+        raise ValueError("模板表达式不能为空")
+
+    slots = []
+    i = 0
+    n = len(s)
+
+    while i < n:
+        if s[i] == '(':
+            end = s.find(')', i)
+            if end == -1:
+                raise ValueError("括号未闭合: 缺少 ')'")
+            options = [opt.strip().lower() for opt in s[i+1:end].split('|') if opt.strip()]
+            if not options:
+                raise ValueError("括号内选项不能为空")
+            next_idx = end + 1
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(options)
+            i = next_idx
+            continue
+
+        if s[i] == '[':
+            end = s.find(']', i)
+            if end == -1:
+                raise ValueError("方括号未闭合: 缺少 ']'")
+            inside = s[i+1:end].lower()
+            chars = set()
+            j = 0
+            while j < len(inside):
+                if j + 2 < len(inside) and inside[j+1] == '-':
+                    c_start = inside[j]
+                    c_end = inside[j+2]
+                    for code in range(ord(c_start), ord(c_end) + 1):
+                        chars.add(chr(code))
+                    j += 3
+                else:
+                    chars.add(inside[j])
+                    j += 1
+            sorted_chars = sorted(list(chars))
+            if not sorted_chars:
+                raise ValueError("方括号字符集解析为空")
+            next_idx = end + 1
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(sorted_chars)
+            i = next_idx
+            continue
+
+        if s[i] == '?':
+            if i + 1 >= n:
+                raise ValueError("问号后缺少占位符类型 (如 ?l, ?d, ?v, ?c, ?*)")
+            t = s[i+1].lower()
+            if t in ('l', 'a'): pool = LETTERS_LIST
+            elif t == 'd': pool = DIGITS_LIST
+            elif t == 'v': pool = VOWELS_LIST
+            elif t == 'c': pool = CONSONANTS_LIST
+            elif t == '*': pool = ALPHANUM_LIST
+            else: raise ValueError(f"未知的通配占位符: ?{t}")
+            next_idx = i + 2
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(pool)
+            i = next_idx
+            continue
+
+        ch = s[i]
+        next_idx = i + 1
+        repeat = 1
+        if next_idx < n and s[next_idx] == '{':
+            rep_end = s.find('}', next_idx)
+            if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                repeat = int(s[next_idx+1:rep_end])
+                next_idx = rep_end + 1
+
+        if ch == 'L':
+            for _ in range(repeat): slots.append(LETTERS_LIST)
+            i = next_idx
+        elif ch == 'D':
+            for _ in range(repeat): slots.append(DIGITS_LIST)
+            i = next_idx
+        elif ch == 'V':
+            for _ in range(repeat): slots.append(VOWELS_LIST)
+            i = next_idx
+        elif ch == 'C':
+            for _ in range(repeat): slots.append(CONSONANTS_LIST)
+            i = next_idx
+        elif ch == '*':
+            for _ in range(repeat): slots.append(ALPHANUM_LIST)
+            i = next_idx
+        else:
+            lit = [ch.lower()]
+            k = i + 1
+            while k < n and s[k] not in ('(', '[', '?', 'L', 'D', 'V', 'C', '*'):
+                lit.append(s[k].lower())
+                k += 1
+            lit_str = "".join(lit)
+            slots.append([lit_str])
+            i = k
+
+    total = 1
+    for slot in slots:
+        total *= len(slot)
+    return slots, total
+
+def generate_template_domain(index, slots, suffix="com"):
+    res = []
+    curr = index
+    for choices in reversed(slots):
+        m = len(choices)
+        res.append(choices[curr % m])
+        curr //= m
+    res.reverse()
+    name = "".join(res)
+    return f"{name}.{suffix}"
+
 def ensure_assignment_bounds(conn, row, task_row):
     """确保分片记录具备精准的 start_idx 和 end_idx 区间，无缝兼容历史运行中的旧任务"""
     if row["start_idx"] is not None and row["end_idx"] is not None:
@@ -581,7 +729,8 @@ def init_db_and_token():
                 ("reset_checkpoint", "BOOLEAN DEFAULT 0"),
                 ("is_aid", "INTEGER DEFAULT 0"),
                 ("parent_task_id", "TEXT DEFAULT NULL"),
-                ("storage_filter", "TEXT DEFAULT NULL")
+                ("storage_filter", "TEXT DEFAULT NULL"),
+                ("template", "TEXT DEFAULT NULL")
             ]:
                 if col not in task_cols:
                     try:
@@ -1574,7 +1723,7 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 全局活跃任务列表 (轻量 tasks 表)
                 cur.execute("""
-                SELECT t.task_id, t.mode, t.suffix, t.threads, t.status, t.storage_filter, datetime(t.created_at, '+8 hours') as created_at,
+                SELECT t.task_id, t.mode, t.template, t.suffix, t.threads, t.status, t.storage_filter, datetime(t.created_at, '+8 hours') as created_at,
                        COUNT(DISTINCT a.id) as total_shards,
                        SUM(CASE WHEN a.status = 'running' THEN 1 ELSE 0 END) as running_shards,
                        SUM(CASE WHEN a.status = 'completed' THEN 1 ELSE 0 END) as completed_shards,
@@ -1925,7 +2074,7 @@ class HubHandler(BaseHTTPRequestHandler):
                     SELECT a.id as assign_id, a.task_id, a.shard_num, a.shard_total, a.status as assign_status, a.scanned as assign_scanned,
                            a.start_idx, a.end_idx, a.total as assign_total, a.is_aid, a.aid_for, a.parent_task_id,
                            t.mode, t.length, t.use_letters, t.use_digits, t.use_hyphen, t.reset_checkpoint, t.suffix, t.threads, t.status as task_status,
-                           t.storage_filter
+                           t.storage_filter, t.template
                     FROM task_assignments a
                     JOIN tasks t ON a.task_id = t.task_id
                     WHERE a.node_id = ?
@@ -1988,7 +2137,9 @@ class HubHandler(BaseHTTPRequestHandler):
                                 "threads": assign_row["threads"],
                                 "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
                                 "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else "",
-                                "storage_filter": filter_cfg
+                                "storage_filter": filter_cfg,
+                                "task_type": "template" if "template" in row_keys and assign_row["template"] else "standard",
+                                "template": assign_row["template"] if "template" in row_keys and assign_row["template"] else ""
                             }
 
                     # 3. 分片处于 pending 状态，立即下发 START
@@ -2016,7 +2167,9 @@ class HubHandler(BaseHTTPRequestHandler):
                             "threads": assign_row["threads"],
                             "is_aid": bool(assign_row["is_aid"]) if "is_aid" in row_keys and assign_row["is_aid"] is not None else False,
                             "aid_for": assign_row["aid_for"] if "aid_for" in row_keys and assign_row["aid_for"] is not None else "",
-                            "storage_filter": filter_cfg
+                            "storage_filter": filter_cfg,
+                            "task_type": "template" if "template" in row_keys and assign_row["template"] else "standard",
+                            "template": assign_row["template"] if "template" in row_keys and assign_row["template"] else ""
                         }
                         with get_db() as conn:
                             conn.execute("UPDATE task_assignments SET status = 'running', updated_at = CURRENT_TIMESTAMP WHERE id = ?;", (assign_row["assign_id"],))
@@ -2247,12 +2400,6 @@ class HubHandler(BaseHTTPRequestHandler):
             threads = int(data.get("threads", 25))
             selected_nodes = data.get("nodes", [])
 
-            if length not in (3, 4, 5, 6):
-                self.send_json({"code": 1, "msg": "字符长度仅支持 3 ~ 6 位"}, 400)
-                return
-            if not use_letters and not use_digits:
-                self.send_json({"code": 1, "msg": "必须勾选字母或数字其中一种"}, 400)
-                return
             if not selected_nodes:
                 self.send_json({"code": 1, "msg": "必须至少勾选一个在线节点"}, 400)
                 return
@@ -2275,15 +2422,46 @@ class HubHandler(BaseHTTPRequestHandler):
                 }, 400)
                 return
 
-            # 推导标准模式名称，与资产库展示完全统一
-            if use_letters and use_digits:
-                type_name = "mix"
-            elif use_digits:
-                type_name = "num"
+            is_template_mode = (data.get("mode_type") == "template") or bool(data.get("template"))
+            if is_template_mode:
+                template_str = data.get("template", "").strip()
+                if not template_str:
+                    self.send_json({"code": 1, "msg": "定向模板表达式不能为空"}, 400)
+                    return
+                try:
+                    slots, total_all = parse_template(template_str)
+                except Exception as e:
+                    self.send_json({"code": 1, "msg": f"模板语法错误: {str(e)}"}, 400)
+                    return
+                if total_all <= 0:
+                    self.send_json({"code": 1, "msg": "模板解析出的候选总数为 0"}, 400)
+                    return
+                sample_dom = generate_template_domain(0, slots, suffix)
+                sample_name = sample_dom.split('.')[0]
+                length = len(sample_name)
+                use_letters = 1
+                use_digits = 1
+                use_hyphen = 1 if '-' in template_str else 0
+                mode = f"tpl_{re.sub(r'[^a-zA-Z0-9]', '_', template_str)}"
             else:
-                type_name = "letter"
-            hyphen_suffix = "-" if use_hyphen else ""
-            mode = f"{length}{type_name}{hyphen_suffix}"
+                template_str = None
+                if length not in (3, 4, 5, 6):
+                    self.send_json({"code": 1, "msg": "字符长度仅支持 3 ~ 6 位"}, 400)
+                    return
+                if not use_letters and not use_digits:
+                    self.send_json({"code": 1, "msg": "必须勾选字母或数字其中一种"}, 400)
+                    return
+
+                # 推导标准模式名称，与资产库展示完全统一
+                if use_letters and use_digits:
+                    type_name = "mix"
+                elif use_digits:
+                    type_name = "num"
+                else:
+                    type_name = "letter"
+                hyphen_suffix = "-" if use_hyphen else ""
+                mode = f"{length}{type_name}{hyphen_suffix}"
+                total_all = calc_domain_total(length, use_letters, use_digits, use_hyphen)
 
             storage_filter = data.get("storage_filter")
             storage_filter_json = json.dumps(storage_filter, ensure_ascii=False) if storage_filter else None
@@ -2313,11 +2491,10 @@ class HubHandler(BaseHTTPRequestHandler):
 
                 # 创建新任务
                 conn.execute("""
-                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, reset_checkpoint, suffix, threads, target_nodes, status, storage_filter)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?);
-                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes), storage_filter_json))
+                INSERT INTO tasks (task_id, mode, length, use_letters, use_digits, use_hyphen, reset_checkpoint, suffix, threads, target_nodes, status, storage_filter, template)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'running', ?, ?);
+                """, (task_id, mode, length, 1 if use_letters else 0, 1 if use_digits else 0, 1 if use_hyphen else 0, 1 if reset_checkpoint else 0, suffix, threads, json.dumps(selected_nodes), storage_filter_json, template_str))
 
-                total_all = calc_domain_total(length, use_letters, use_digits, use_hyphen)
                 # 自动为每个勾选的节点分配对应分片 (1/N ... N/N)
                 for idx, n_id in enumerate(selected_nodes, start=1):
                     start_idx = ((idx - 1) * total_all) // shard_total
@@ -2332,9 +2509,10 @@ class HubHandler(BaseHTTPRequestHandler):
 
             self.send_json({
                 "code": 0,
-                "msg": f"任务已创建！已自动切为 {shard_total} 分片并下发到选中的节点",
+                "msg": f"🎯 定向模板任务已创建！共 {total_all:,} 个组合，已切为 {shard_total} 分片下发" if is_template_mode else f"任务已创建！已自动切为 {shard_total} 分片并下发到选中的节点",
                 "task_id": task_id,
-                "mode": mode
+                "mode": mode,
+                "total": total_all
             })
             return
 

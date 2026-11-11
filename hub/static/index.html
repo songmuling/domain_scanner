@@ -488,6 +488,30 @@
       color: #92400e !important;
     }
 
+    /* 定向模板选号面板浅色适配 */
+    html:not(.dark) .template-help-panel {
+      background-color: #f8fafc !important;
+      border-color: #cbd5e1 !important;
+    }
+    html:not(.dark) .template-help-panel code {
+      background-color: #e2e8f0 !important;
+      color: #3730a3 !important;
+    }
+    html:not(.dark) .template-help-panel .text-slate-300 {
+      color: #334155 !important;
+    }
+    html:not(.dark) .template-help-panel .text-slate-200 {
+      color: #0f172a !important;
+    }
+    html:not(.dark) .template-help-panel .border-slate-800,
+    html:not(.dark) .template-help-panel .border-slate-800\/80 {
+      border-color: #e2e8f0 !important;
+    }
+    html:not(.dark) .template-preview-card {
+      background-color: #f8fafc !important;
+      border-color: #c7d2fe !important;
+    }
+
     /* 滚动条浅色适配 */
     html:not(.dark) ::-webkit-scrollbar-track {
       background: #f1f5f9;
@@ -585,7 +609,7 @@
               <span class="text-xs font-semibold text-indigo-300 uppercase task-label">活跃扫描任务:</span>
               <span
                 class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono task-badge">
-                {{ t.mode }} ({{ t.suffix || 'com' }})
+                {{ t.template ? '🎯 定向模板: ' + t.template : t.mode }} ({{ t.suffix || 'com' }})
               </span>
               <span v-if="t.storage_filter && t.storage_filter.enabled"
                 class="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold">
@@ -998,73 +1022,219 @@
 
         <!-- 内部独立滚动区域 -->
         <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
-          <!-- 自定义位数 (3~6 位) -->
-          <div>
-            <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 6 位):</label>
-            <div class="grid grid-cols-4 gap-2">
-              <button type="button" v-for="len in [3, 4, 5, 6]" :key="len"
-                @click="dispatchForm.length = len"
-                :class="dispatchForm.length === len ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'"
-                class="py-2 rounded-xl border text-center font-bold text-xs transition">
-                {{ len }} 位字符
-              </button>
-            </div>
+          <!-- 模式切换：全量穷举 vs 定向模板选号 -->
+          <div class="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
+            <button type="button" @click="dispatchForm.mode_type = 'standard'"
+              :class="dispatchForm.mode_type !== 'template' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <span>📊</span> 常规全量穷举
+            </button>
+            <button type="button" @click="dispatchForm.mode_type = 'template'"
+              :class="dispatchForm.mode_type === 'template' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+              <span>🎯</span> 定向模板选号
+              <span class="text-[10px] bg-emerald-500/30 text-emerald-300 px-1.5 py-0.2 rounded-full border border-emerald-400/30 font-mono">秒级狙击</span>
+            </button>
           </div>
 
-          <!-- 字符组合与连字符选项 -->
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
-            <div>
-              <label class="block text-slate-400 mb-1.5 font-medium">2. 字符组成 (多选):</label>
-              <div class="space-y-2">
-                <label class="flex items-center gap-2 cursor-pointer text-slate-200">
-                  <input type="checkbox" v-model="dispatchForm.use_letters"
-                    class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>包含纯字母 (a-z)</span>
+          <!-- A. 定向模板选号视图 -->
+          <template v-if="dispatchForm.mode_type === 'template'">
+            <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+              <div class="flex items-center justify-between">
+                <label class="block text-slate-300 font-medium text-xs flex items-center gap-1">
+                  <span>🎯</span> 模板表达式 (支持掩码与正则扩展):
                 </label>
-                <label class="flex items-center gap-2 cursor-pointer text-slate-200">
-                  <input type="checkbox" v-model="dispatchForm.use_digits"
-                    class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>包含纯数字 (0-9)</span>
+                <button type="button" @click="showTemplateHelp = !showTemplateHelp"
+                  class="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-400 hover:text-indigo-300 bg-indigo-950/40 hover:bg-indigo-900/50 border border-indigo-800/60 px-2 py-0.5 rounded-full transition cursor-pointer"
+                  title="点击展开/收起模板语法指南">
+                  <span>📖</span> <span>语法指南</span>
+                  <span class="text-[10px]">{{ showTemplateHelp ? '收起 ▴' : '展开 ▾' }}</span>
+                </button>
+              </div>
+
+              <!-- 语法规则说明面板 (可展开收起，浅色模式精细适配) -->
+              <div v-if="showTemplateHelp" class="template-help-panel p-3 rounded-xl border space-y-2 text-[11px] bg-slate-950/90 border-slate-800 transition">
+                <div class="font-bold text-slate-200 flex items-center justify-between border-b border-slate-800/80 pb-1.5">
+                  <span class="flex items-center gap-1"><span>✨</span> 模板占位符与语法规范</span>
+                  <span class="text-[10px] text-slate-500 font-normal">支持大写 L 或 Hashcat ?l 语法</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-[11px]">
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold">L</code>
+                      <span class="text-slate-400">或</span>
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono">?l</code>
+                      <span class="text-slate-300">: 纯小写字母 a-z (26)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold">D</code>
+                      <span class="text-slate-400">或</span>
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono">?d</code>
+                      <span class="text-slate-300">: 纯数字 0-9 (10)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold">V</code>
+                      <span class="text-slate-400">或</span>
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono">?v</code>
+                      <span class="text-slate-300">: 元音字母 a,e,i,o,u (5)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold">C</code>
+                      <span class="text-slate-400">或</span>
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono">?c</code>
+                      <span class="text-slate-300">: 声母辅音 (21)</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1.5 py-0.5 rounded bg-slate-800 text-indigo-300 font-mono font-bold">*</code>
+                      <span class="text-slate-300">: 字母或数字 (36)</span>
+                    </div>
+                  </div>
+                  <div class="space-y-1">
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-amber-300 font-mono">[abc]</code>
+                      <span class="text-slate-300">: 指定字符集 (如 [0-5])</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-amber-300 font-mono">{n}</code>
+                      <span class="text-slate-300">: 重复次数 (如 L{2}, [a-z]{3})</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-emerald-300 font-mono">(88|66)</code>
+                      <span class="text-slate-300">: 多选一词缀/靓尾</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <code class="px-1 py-0.5 rounded bg-slate-800 text-slate-300 font-mono">固定字符</code>
+                      <span class="text-slate-300">: 原样字面量 (如 888, vip, ai)</span>
+                    </div>
+                  </div>
+                </div>
+                <div class="border-t border-slate-800/80 pt-2 flex items-center gap-1.5 flex-wrap">
+                  <span class="text-slate-400 text-[10px]">💡 快捷点击尝试:</span>
+                  <button type="button" @click="dispatchForm.template = 'LL888'" class="px-2 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/60 transition cursor-pointer">LL888 (前2字母+888)</button>
+                  <button type="button" @click="dispatchForm.template = 'DDDvip'" class="px-2 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/60 transition cursor-pointer">DDDvip (3数字+vip)</button>
+                  <button type="button" @click="dispatchForm.template = '[a-z]{2}(88|66)'" class="px-2 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/60 transition cursor-pointer">[a-z]{2}(88|66)</button>
+                  <button type="button" @click="dispatchForm.template = 'VV88'" class="px-2 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/60 transition cursor-pointer">VV88 (纯元音+88)</button>
+                  <button type="button" @click="dispatchForm.template = 'LL-LL'" class="px-2 py-0.5 rounded bg-indigo-900/40 text-indigo-300 border border-indigo-700/50 hover:bg-indigo-800/60 transition cursor-pointer">LL-LL (2字母-2字母)</button>
+                </div>
+              </div>
+
+              <!-- 模板输入框 -->
+              <div class="relative">
+                <input v-model="dispatchForm.template" type="text"
+                  placeholder="输入模板，如: LL888、DDDvip、[a-z]{2}(88|66) ..."
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm tracking-wide focus:outline-none focus:border-indigo-500 shadow-inner">
+              </div>
+
+              <!-- 常用狙击推荐 -->
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <span class="text-slate-400 text-[10px]">常用狙击:</span>
+                <button type="button" v-for="rec in quickTemplates" :key="rec.tpl"
+                  @click="dispatchForm.template = rec.tpl"
+                  class="px-2 py-1 rounded-lg text-[11px] border border-slate-800 bg-slate-950/60 hover:bg-slate-800 text-slate-300 transition cursor-pointer">
+                  {{ rec.label }}
+                </button>
+              </div>
+
+              <!-- 实时编译与预览卡片 -->
+              <div class="template-preview-card p-3 rounded-xl border transition space-y-1.5"
+                :class="templateMeta.valid ? 'bg-indigo-950/30 border-indigo-900/60' : 'bg-red-950/20 border-red-900/50'">
+                <div v-if="templateMeta.valid" class="space-y-1.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-400 text-[11px]">定向狙击总组合:</span>
+                    <span class="font-bold text-emerald-400 text-sm font-mono">{{ templateMeta.total.toLocaleString() }} 个</span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-400 text-[11px]">首尾样本跨度:</span>
+                    <span class="font-mono text-indigo-300 text-xs">{{ templateMeta.first }} ➔ {{ templateMeta.last }}</span>
+                  </div>
+                  <div class="flex items-center justify-between border-t border-indigo-900/40 pt-1.5">
+                    <span class="text-slate-400 text-[11px]">单机均摊任务量:</span>
+                    <span class="text-slate-200 text-xs">
+                      已选 <b class="text-indigo-400">{{ selectedNodeList.length }}</b> 台 · 约 <b class="text-white">{{ templateMeta.perNode.toLocaleString() }}</b> 个/台
+                    </span>
+                  </div>
+                  <div class="flex items-center justify-between">
+                    <span class="text-slate-400 text-[11px]">预计扫描耗时:</span>
+                    <span class="font-bold text-amber-300 text-xs">⚡ {{ templateMeta.estTime }}</span>
+                  </div>
+                </div>
+                <div v-else class="text-rose-400 text-xs py-1 flex items-center gap-1.5 font-medium">
+                  <span>⚠️</span> {{ templateMeta.error }}
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- B. 常规全量穷举视图 -->
+          <template v-else>
+            <!-- 自定义位数 (3~6 位) -->
+            <div>
+              <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 6 位):</label>
+              <div class="grid grid-cols-4 gap-2">
+                <button type="button" v-for="len in [3, 4, 5, 6]" :key="len"
+                  @click="dispatchForm.length = len"
+                  :class="dispatchForm.length === len ? 'bg-indigo-600 text-white border-indigo-500 shadow-md shadow-indigo-600/30' : 'bg-slate-950 text-slate-400 border-slate-800 hover:bg-slate-800'"
+                  class="py-2 rounded-xl border text-center font-bold text-xs transition">
+                  {{ len }} 位字符
+                </button>
+              </div>
+            </div>
+
+            <!-- 字符组合与连字符选项 -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+              <div>
+                <label class="block text-slate-400 mb-1.5 font-medium">2. 字符组成 (多选):</label>
+                <div class="space-y-2">
+                  <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                    <input type="checkbox" v-model="dispatchForm.use_letters"
+                      class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>包含纯字母 (a-z)</span>
+                  </label>
+                  <label class="flex items-center gap-2 cursor-pointer text-slate-200">
+                    <input type="checkbox" v-model="dispatchForm.use_digits"
+                      class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>包含纯数字 (0-9)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label class="block text-slate-400 mb-1.5 font-medium">3. 连字符设置:</label>
+                <label class="flex items-start gap-2 cursor-pointer text-slate-200 pt-0.5">
+                  <input type="checkbox" v-model="dispatchForm.use_hyphen"
+                    class="rounded border-slate-700 text-indigo-600 focus:ring-0 mt-0.5">
+                  <div>
+                    <span class="block">包含连字符 “-”</span>
+                    <span class="text-[10px] text-slate-500 block">自动插在非首尾位置 (如 ab-cd)</span>
+                  </div>
                 </label>
               </div>
             </div>
 
-            <div>
-              <label class="block text-slate-400 mb-1.5 font-medium">3. 连字符设置:</label>
-              <label class="flex items-start gap-2 cursor-pointer text-slate-200 pt-0.5">
-                <input type="checkbox" v-model="dispatchForm.use_hyphen"
-                  class="rounded border-slate-700 text-indigo-600 focus:ring-0 mt-0.5">
-                <div>
-                  <span class="block">包含连字符 “-”</span>
-                  <span class="text-[10px] text-slate-500 block">自动插在非首尾位置 (如 ab-cd)</span>
-                </div>
-              </label>
+            <!-- 动态实时计算卡片 -->
+            <div class="bg-indigo-950/30 border border-indigo-900/60 p-3 rounded-xl space-y-1.5">
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400 text-[11px]">匹配模式名称:</span>
+                <span class="font-mono font-bold text-indigo-300 text-xs px-2 py-0.5 bg-indigo-900/40 rounded border border-indigo-700/50">
+                  {{ derivedModeName }}
+                </span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400 text-[11px]">示例域名格式:</span>
+                <span class="font-mono text-slate-300 text-[11px]">{{ previewExamples }}</span>
+              </div>
+              <div class="flex items-center justify-between">
+                <span class="text-slate-400 text-[11px]">全量候选池总数:</span>
+                <span class="font-bold text-emerald-400 text-xs">{{ estimatedTotal.toLocaleString() }} 个</span>
+              </div>
+              <div class="flex items-center justify-between border-t border-indigo-900/40 pt-1.5">
+                <span class="text-slate-400 text-[11px]">单机均摊任务量:</span>
+                <span class="text-slate-200 text-xs">
+                  已选 <b class="text-indigo-400">{{ selectedNodeList.length }}</b> 台 · 约 <b class="text-white">{{ perNodeCount.toLocaleString() }}</b> 个/台
+                </span>
+              </div>
             </div>
-          </div>
-
-          <!-- 动态实时计算卡片 -->
-          <div class="bg-indigo-950/30 border border-indigo-900/60 p-3 rounded-xl space-y-1.5">
-            <div class="flex items-center justify-between">
-              <span class="text-slate-400 text-[11px]">匹配模式名称:</span>
-              <span class="font-mono font-bold text-indigo-300 text-xs px-2 py-0.5 bg-indigo-900/40 rounded border border-indigo-700/50">
-                {{ derivedModeName }}
-              </span>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-slate-400 text-[11px]">示例域名格式:</span>
-              <span class="font-mono text-slate-300 text-[11px]">{{ previewExamples }}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-slate-400 text-[11px]">全量候选池总数:</span>
-              <span class="font-bold text-emerald-400 text-xs">{{ estimatedTotal.toLocaleString() }} 个</span>
-            </div>
-            <div class="flex items-center justify-between border-t border-indigo-900/40 pt-1.5">
-              <span class="text-slate-400 text-[11px]">单机均摊任务量:</span>
-              <span class="text-slate-200 text-xs">
-                已选 <b class="text-indigo-400">{{ selectedNodeList.length }}</b> 台 · 约 <b class="text-white">{{ perNodeCount.toLocaleString() }}</b> 个/台
-              </span>
-            </div>
-          </div>
+          </template>
 
           <div class="grid grid-cols-2 gap-3">
             <div>
@@ -1106,7 +1276,7 @@
           </div>
 
           <!-- 5. 前置精选排查规则 (极速先筛后查：本地内存毫秒级跳过乱码，仅向网络提交精品) -->
-          <div class="filter-panel-box p-3 rounded-xl border space-y-2.5">
+          <div v-if="dispatchForm.mode_type !== 'template'" class="filter-panel-box p-3 rounded-xl border space-y-2.5">
             <div class="flex items-center justify-between">
               <label class="flex items-center gap-2 cursor-pointer">
                 <input type="checkbox" v-model="dispatchForm.storage_filter.enabled" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
@@ -1854,7 +2024,205 @@
 
         const openDispatchModal = ref(false);
         const dispatching = ref(false);
+        const showTemplateHelp = ref(false);
+        const quickTemplates = [
+          { label: 'LL888 (前2字母+888)', tpl: 'LL888' },
+          { label: 'DDDvip (3数字+vip)', tpl: 'DDDvip' },
+          { label: 'LL666 (前2字母+666)', tpl: 'LL666' },
+          { label: 'VV88 (纯元音+88)', tpl: 'VV88' },
+          { label: '[a-z]{2}ai (2字母+ai)', tpl: '[a-z]{2}ai' },
+          { label: 'LL-LL (2字母-2字母)', tpl: 'LL-LL' }
+        ];
+
+        const VOWELS_ARR = 'aeiou'.split('');
+        const CONSONANTS_ARR = 'bcdfghjklmnpqrstvwxyz'.split('');
+        const LETTERS_ARR = 'abcdefghijklmnopqrstuvwxyz'.split('');
+        const DIGITS_ARR = '0123456789'.split('');
+        const ALPHANUM_ARR = [...LETTERS_ARR, ...DIGITS_ARR];
+
+        const parseTemplateJS = (patternStr) => {
+          const s = (patternStr || '').trim();
+          if (!s) return { valid: false, error: '请输入模板表达式 (如: LL888)', total: 0, slots: [] };
+          const slots = [];
+          let i = 0;
+          const n = s.length;
+          try {
+            while (i < n) {
+              if (s[i] === '(') {
+                const end = s.indexOf(')', i);
+                if (end === -1) return { valid: false, error: "括号未闭合: 缺少 ')'", total: 0, slots: [] };
+                const rawOpts = s.slice(i + 1, end).split('|').map(x => x.trim().toLowerCase()).filter(Boolean);
+                if (rawOpts.length === 0) return { valid: false, error: "括号内选项不能为空", total: 0, slots: [] };
+                let nextIdx = end + 1;
+                let repeat = 1;
+                if (nextIdx < n && s[nextIdx] === '{') {
+                  const repEnd = s.indexOf('}', nextIdx);
+                  if (repEnd !== -1 && /^\d+$/.test(s.slice(nextIdx + 1, repEnd))) {
+                    repeat = parseInt(s.slice(nextIdx + 1, repEnd));
+                    nextIdx = repEnd + 1;
+                  }
+                }
+                for (let r = 0; r < repeat; r++) slots.push(rawOpts);
+                i = nextIdx;
+                continue;
+              }
+              if (s[i] === '[') {
+                const end = s.indexOf(']', i);
+                if (end === -1) return { valid: false, error: "方括号未闭合: 缺少 ']'", total: 0, slots: [] };
+                const inside = s.slice(i + 1, end).toLowerCase();
+                const setChars = new Set();
+                let j = 0;
+                while (j < inside.length) {
+                  if (j + 2 < inside.length && inside[j + 1] === '-') {
+                    const cStart = inside.charCodeAt(j);
+                    const cEnd = inside.charCodeAt(j + 2);
+                    for (let code = cStart; code <= cEnd; code++) setChars.add(String.fromCharCode(code));
+                    j += 3;
+                  } else {
+                    setChars.add(inside[j]);
+                    j += 1;
+                  }
+                }
+                const sorted = Array.from(setChars).sort();
+                if (sorted.length === 0) return { valid: false, error: "方括号字符集解析为空", total: 0, slots: [] };
+                let nextIdx = end + 1;
+                let repeat = 1;
+                if (nextIdx < n && s[nextIdx] === '{') {
+                  const repEnd = s.indexOf('}', nextIdx);
+                  if (repEnd !== -1 && /^\d+$/.test(s.slice(nextIdx + 1, repEnd))) {
+                    repeat = parseInt(s.slice(nextIdx + 1, repEnd));
+                    nextIdx = repEnd + 1;
+                  }
+                }
+                for (let r = 0; r < repeat; r++) slots.push(sorted);
+                i = nextIdx;
+                continue;
+              }
+              if (s[i] === '?') {
+                if (i + 1 >= n) return { valid: false, error: "问号后缺少占位符类型 (如 ?l, ?d, ?v, ?c, ?*)", total: 0, slots: [] };
+                const t = s[i + 1].toLowerCase();
+                let pool = null;
+                if (t === 'l' || t === 'a') pool = LETTERS_ARR;
+                else if (t === 'd') pool = DIGITS_ARR;
+                else if (t === 'v') pool = VOWELS_ARR;
+                else if (t === 'c') pool = CONSONANTS_ARR;
+                else if (t === '*') pool = ALPHANUM_ARR;
+                else return { valid: false, error: `未知的通配占位符: ?${t}`, total: 0, slots: [] };
+                let nextIdx = i + 2;
+                let repeat = 1;
+                if (nextIdx < n && s[nextIdx] === '{') {
+                  const repEnd = s.indexOf('}', nextIdx);
+                  if (repEnd !== -1 && /^\d+$/.test(s.slice(nextIdx + 1, repEnd))) {
+                    repeat = parseInt(s.slice(nextIdx + 1, repEnd));
+                    nextIdx = repEnd + 1;
+                  }
+                }
+                for (let r = 0; r < repeat; r++) slots.push(pool);
+                i = nextIdx;
+                continue;
+              }
+              const ch = s[i];
+              let nextIdx = i + 1;
+              let repeat = 1;
+              if (nextIdx < n && s[nextIdx] === '{') {
+                const repEnd = s.indexOf('}', nextIdx);
+                if (repEnd !== -1 && /^\d+$/.test(s.slice(nextIdx + 1, repEnd))) {
+                  repeat = parseInt(s.slice(nextIdx + 1, repEnd));
+                  nextIdx = repEnd + 1;
+                }
+              }
+              if (ch === 'L') {
+                for (let r = 0; r < repeat; r++) slots.push(LETTERS_ARR);
+                i = nextIdx;
+              } else if (ch === 'D') {
+                for (let r = 0; r < repeat; r++) slots.push(DIGITS_ARR);
+                i = nextIdx;
+              } else if (ch === 'V') {
+                for (let r = 0; r < repeat; r++) slots.push(VOWELS_ARR);
+                i = nextIdx;
+              } else if (ch === 'C') {
+                for (let r = 0; r < repeat; r++) slots.push(CONSONANTS_ARR);
+                i = nextIdx;
+              } else if (ch === '*') {
+                for (let r = 0; r < repeat; r++) slots.push(ALPHANUM_ARR);
+                i = nextIdx;
+              } else {
+                const lit = [ch.toLowerCase()];
+                let k = i + 1;
+                while (k < n && !['(', '[', '?', 'L', 'D', 'V', 'C', '*'].includes(s[k])) {
+                  lit.push(s[k].toLowerCase());
+                  k += 1;
+                }
+                slots.push([lit.join('')]);
+                i = k;
+              }
+            }
+
+            let total = 1;
+            for (const slot of slots) {
+              total *= slot.length;
+            }
+            return { valid: true, error: '', total, slots };
+          } catch (err) {
+            return { valid: false, error: err.message || '模板解析出错', total: 0, slots: [] };
+          }
+        };
+
+        const generateSampleJS = (index, slots, suffix = 'com') => {
+          const res = [];
+          let curr = index;
+          for (let i = slots.length - 1; i >= 0; i--) {
+            const choices = slots[i];
+            const m = choices.length;
+            res.push(choices[curr % m]);
+            curr = Math.floor(curr / m);
+          }
+          res.reverse();
+          return res.join('') + '.' + suffix;
+        };
+
+        const templateMeta = computed(() => {
+          const tpl = (dispatchForm.value.template || '').trim();
+          const parsed = parseTemplateJS(tpl);
+          if (!parsed.valid) {
+            return {
+              valid: false,
+              error: parsed.error,
+              total: 0,
+              first: '-',
+              last: '-',
+              perNode: 0,
+              estTime: '-'
+            };
+          }
+          const total = parsed.total;
+          const suf = dispatchForm.value.suffix || 'com';
+          const first = generateSampleJS(0, parsed.slots, suf);
+          const last = generateSampleJS(Math.max(0, total - 1), parsed.slots, suf);
+          const nodeCount = Math.max(1, selectedNodeList.value.length);
+          const perNode = Math.ceil(total / nodeCount);
+          const totalThreads = Math.max(1, nodeCount * (dispatchForm.value.threads || 25));
+          const estSec = Math.max(0.5, total / (totalThreads * 20));
+          let estTimeStr = '';
+          if (estSec < 3) estTimeStr = '约 1~2 秒 (秒级全网结果)';
+          else if (estSec < 60) estTimeStr = `约 ${Math.round(estSec)} 秒`;
+          else if (estSec < 3600) estTimeStr = `约 ${Math.round(estSec / 60)} 分钟`;
+          else estTimeStr = `约 ${(estSec / 3600).toFixed(1)} 小时`;
+
+          return {
+            valid: true,
+            error: '',
+            total,
+            first,
+            last,
+            perNode,
+            estTime: estTimeStr
+          };
+        });
+
         const dispatchForm = ref({
+          mode_type: 'standard', // 'standard' | 'template'
+          template: 'LL888',
           length: 4,
           use_letters: true,
           use_digits: false,
@@ -2165,9 +2533,16 @@
             showToast('请至少勾选一个处于在线就绪状态的 Agent 节点');
             return;
           }
-          if (!dispatchForm.value.use_letters && !dispatchForm.value.use_digits) {
-            showToast('请至少勾选字母或数字一种字符');
-            return;
+          if (dispatchForm.value.mode_type === 'template') {
+            if (!templateMeta.value.valid) {
+              showToast(templateMeta.value.error || '模板表达式语法不正确');
+              return;
+            }
+          } else {
+            if (!dispatchForm.value.use_letters && !dispatchForm.value.use_digits) {
+              showToast('请至少勾选字母或数字一种字符');
+              return;
+            }
           }
 
           let filterPayload = null;
@@ -2202,6 +2577,8 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
+                mode_type: dispatchForm.value.mode_type,
+                template: dispatchForm.value.template,
                 length: dispatchForm.value.length,
                 use_letters: dispatchForm.value.use_letters,
                 use_digits: dispatchForm.value.use_digits,
@@ -2497,6 +2874,7 @@
           selectAllFilterRules, resetFilterRules,
           onlineNodes, offlineNodes, toggleSelectAllOnlineNodes, cleanOfflineNodes,
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
+          showTemplateHelp, quickTemplates, templateMeta,
           activeAgentTab, isEditingToken, newTokenInput,
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
           submitDispatch, stopClusterTask, deleteNode, activeTaskList,

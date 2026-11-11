@@ -258,6 +258,179 @@ def get_sharded_generator(length, use_letters, use_digits, use_hyphen, suffix, s
 
     yield from get_range_generator(length, use_letters, use_digits, use_hyphen, suffix, start_idx, end_idx)
 
+# ----------------- 智能模板与掩码定向生成引擎 (Targeted Pattern / Mask Engine) -----------------
+
+VOWELS_LIST = list("aeiou")
+CONSONANTS_LIST = list("bcdfghjklmnpqrstvwxyz")
+LETTERS_LIST = list("abcdefghijklmnopqrstuvwxyz")
+DIGITS_LIST = list("0123456789")
+ALPHANUM_LIST = LETTERS_LIST + DIGITS_LIST
+
+def parse_template(pattern_str):
+    """
+    将用户模板字符串解析为 slots 列表与笛卡尔积总数
+    支持：
+    1. 占位符: L/?l(字母26), D/?d(数字10), V/?v(元音5), C/?c(辅音21), */?*(任意36)
+    2. 方括号集: [abc], [a-z], [0-9]
+    3. 重复量词: L{2}, D{3}, [a-z]{2}
+    4. 分支选择: (88|66|99|vip)
+    5. 固定字面量: 888, vip, ai, - 等
+    """
+    s = pattern_str.strip()
+    if not s:
+        raise ValueError("模板表达式不能为空")
+
+    slots = []
+    i = 0
+    n = len(s)
+
+    while i < n:
+        # 1. 括号多选分支: (88|66|99|vip|ai)
+        if s[i] == '(':
+            end = s.find(')', i)
+            if end == -1:
+                raise ValueError("括号未闭合: 缺少 ')'")
+            options = [opt.strip().lower() for opt in s[i+1:end].split('|') if opt.strip()]
+            if not options:
+                raise ValueError("括号内选项不能为空")
+            next_idx = end + 1
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(options)
+            i = next_idx
+            continue
+
+        # 2. 方括号字符集: [a-z], [0-9], [abc], [a-z0-9]
+        if s[i] == '[':
+            end = s.find(']', i)
+            if end == -1:
+                raise ValueError("方括号未闭合: 缺少 ']'")
+            inside = s[i+1:end].lower()
+            chars = set()
+            j = 0
+            while j < len(inside):
+                if j + 2 < len(inside) and inside[j+1] == '-':
+                    c_start = inside[j]
+                    c_end = inside[j+2]
+                    for code in range(ord(c_start), ord(c_end) + 1):
+                        chars.add(chr(code))
+                    j += 3
+                else:
+                    chars.add(inside[j])
+                    j += 1
+            sorted_chars = sorted(list(chars))
+            if not sorted_chars:
+                raise ValueError("方括号字符集解析为空")
+            next_idx = end + 1
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(sorted_chars)
+            i = next_idx
+            continue
+
+        # 3. Hashcat 风格通配符: ?l, ?d, ?v, ?c, ?*
+        if s[i] == '?':
+            if i + 1 >= n:
+                raise ValueError("问号后缺少占位符类型 (如 ?l, ?d, ?v, ?c, ?*)")
+            t = s[i+1].lower()
+            if t in ('l', 'a'):
+                pool = LETTERS_LIST
+            elif t == 'd':
+                pool = DIGITS_LIST
+            elif t == 'v':
+                pool = VOWELS_LIST
+            elif t == 'c':
+                pool = CONSONANTS_LIST
+            elif t == '*':
+                pool = ALPHANUM_LIST
+            else:
+                raise ValueError(f"未知的通配占位符: ?{t}")
+            next_idx = i + 2
+            repeat = 1
+            if next_idx < n and s[next_idx] == '{':
+                rep_end = s.find('}', next_idx)
+                if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                    repeat = int(s[next_idx+1:rep_end])
+                    next_idx = rep_end + 1
+            for _ in range(repeat):
+                slots.append(pool)
+            i = next_idx
+            continue
+
+        # 4. 单字符简写 L, D, V, C, *
+        ch = s[i]
+        next_idx = i + 1
+        repeat = 1
+        if next_idx < n and s[next_idx] == '{':
+            rep_end = s.find('}', next_idx)
+            if rep_end != -1 and s[next_idx+1:rep_end].isdigit():
+                repeat = int(s[next_idx+1:rep_end])
+                next_idx = rep_end + 1
+
+        if ch == 'L':
+            for _ in range(repeat): slots.append(LETTERS_LIST)
+            i = next_idx
+        elif ch == 'D':
+            for _ in range(repeat): slots.append(DIGITS_LIST)
+            i = next_idx
+        elif ch == 'V':
+            for _ in range(repeat): slots.append(VOWELS_LIST)
+            i = next_idx
+        elif ch == 'C':
+            for _ in range(repeat): slots.append(CONSONANTS_LIST)
+            i = next_idx
+        elif ch == '*':
+            for _ in range(repeat): slots.append(ALPHANUM_LIST)
+            i = next_idx
+        else:
+            # 普通字面量 (如 888, vip, abc, -)
+            lit = [ch.lower()]
+            k = i + 1
+            while k < n and s[k] not in ('(', '[', '?', 'L', 'D', 'V', 'C', '*'):
+                lit.append(s[k].lower())
+                k += 1
+            lit_str = "".join(lit)
+            slots.append([lit_str])
+            i = k
+
+    total = 1
+    for slot in slots:
+        total *= len(slot)
+    return slots, total
+
+def generate_template_domain(index, slots, suffix="com"):
+    """
+    O(1) 广义混合进制 (Mixed-Radix) 数学解码器：
+    将任意全局索引映射为唯一的模板域名，零内存开销，瞬时随机定位
+    """
+    res = []
+    curr = index
+    for choices in reversed(slots):
+        m = len(choices)
+        res.append(choices[curr % m])
+        curr //= m
+    res.reverse()
+    name = "".join(res)
+    return f"{name}.{suffix}"
+
+def get_template_range_generator(template_str, suffix, start_idx, end_idx):
+    """
+    模板分片生成器：支持多机分布式切片与工作窃取
+    """
+    slots, total = parse_template(template_str)
+    for idx in range(start_idx, end_idx):
+        yield generate_template_domain(idx, slots, suffix)
+
 # ----------------- 核心扫描引擎: DNS 初筛 + RDAP 终验 -----------------
 
 def dns_has_record(domain):
