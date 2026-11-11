@@ -1129,6 +1129,14 @@ def build_domain_filters(params):
             placeholders = ",".join("?" for _ in c_modes)
             where_clauses.append(f"mode IN ({placeholders})")
             bind_params.extend(c_modes)
+
+        # 双重硬核防护：若用户未勾选数字/字母/连字符，追加字符硬过滤，杜绝任何历史遗留错位数据
+        if not chk_digit and (chk_letter or chk_hyphen):
+            where_clauses.append("domains.domain NOT GLOB '*[0-9]*'")
+        if not chk_letter and (chk_digit or chk_hyphen):
+            where_clauses.append("domains.domain NOT GLOB '*[a-zA-Z]*'")
+        if not chk_hyphen:
+            where_clauses.append("domains.domain NOT GLOB '*-*'")
     elif mode and mode != "all":
         where_clauses.append("mode = ?")
         bind_params.append(mode)
@@ -1921,6 +1929,11 @@ class HubHandler(BaseHTTPRequestHandler):
 
                         if not d_name:
                             continue
+                        # 严格推导并纠正真实标准 mode，杜绝任何上报源 mode 错位
+                        clean_name = clean_domain_name(d_name)
+                        c_type = "num" if clean_name.isdigit() else ("letter" if clean_name.isalpha() else "mix")
+                        c_hyphen = "-" if "-" in d_name.split('.')[0] else ""
+                        d_mode = f"{len(clean_name)}{c_type}{c_hyphen}"
                         feats = analyze_domain_features(d_name)
                         try:
                             conn.execute("""
