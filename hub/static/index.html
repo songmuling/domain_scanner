@@ -503,27 +503,27 @@
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
         <div class="text-xs font-medium text-slate-400">可用域名总库存</div>
-        <div class="text-2xl font-black text-white mt-1">{{ stats.total_available?.toLocaleString() || 0 }}</div>
+        <div class="text-2xl font-black text-white mt-1">{{ stats?.total_available?.toLocaleString() || 0 }}</div>
         <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
           <span>今日发现:</span>
-          <span class="font-bold">+{{ stats.today_found || 0 }}</span>
+          <span class="font-bold">+{{ stats?.today_found || 0 }}</span>
         </div>
       </div>
 
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
         <div class="text-xs font-medium text-slate-400">集群实时总扫速</div>
         <div class="text-2xl font-black text-indigo-400 mt-1">
-          {{ stats.total_speed || 0 }} <span class="text-xs text-slate-400 font-normal">个/秒</span>
+          {{ stats?.total_speed || 0 }} <span class="text-xs text-slate-400 font-normal">个/秒</span>
         </div>
         <div class="text-[11px] text-slate-400 mt-1">
-          活跃节点: <span class="text-white font-semibold">{{ stats.active_nodes || 0 }}</span> / {{ nodes.length }}
+          活跃节点: <span class="text-white font-semibold">{{ stats?.active_nodes || 0 }}</span> / {{ nodes.length }}
         </div>
       </div>
 
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl cursor-pointer hover:border-amber-500/50 transition group"
         @click="toggleOnlyStarred" title="点击快速切换【只看我的收藏】">
         <div class="text-xs font-medium text-slate-400 group-hover:text-amber-400 transition">我的星标收藏</div>
-        <div class="text-2xl font-black text-amber-400 mt-1">{{ stats.total_starred || 0 }}</div>
+        <div class="text-2xl font-black text-amber-400 mt-1">{{ stats?.total_starred || 0 }}</div>
         <div class="text-[11px] text-slate-400 mt-1">
           <span :class="onlyStarred ? 'text-amber-400 font-bold' : ''">{{ onlyStarred ? '● 正在查看收藏 (点击还原全部)' : '点击快速切换只看收藏' }}</span>
         </div>
@@ -532,7 +532,7 @@
       <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
         <div class="text-xs font-medium text-slate-400">模式资产分布 (点击直达筛选)</div>
         <div class="text-xs text-slate-300 mt-2 flex flex-wrap gap-1.5">
-          <button v-for="(cnt, m) in stats.mode_stats" :key="m" @click="selectModeFromStats(m)"
+          <button v-for="(cnt, m) in stats?.mode_stats" :key="m" @click="selectModeFromStats(m)"
             class="px-1.5 py-0.5 bg-slate-800 hover:bg-indigo-900/60 hover:border-indigo-500 rounded border border-slate-700 text-[10px] transition cursor-pointer"
             :title="'快速筛选 ' + m">
             {{ m }}: <b class="text-white">{{ cnt }}</b>
@@ -653,9 +653,9 @@
             :title="onlyStarred ? '当前正处于【只看收藏】，点击恢复查看全部' : '点击只看我的收藏'">
             <span>⭐</span>
             <span>只看收藏</span>
-            <span v-if="stats.total_starred > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono"
+            <span v-if="stats?.total_starred > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono"
               :class="onlyStarred ? 'bg-amber-400/20 text-amber-500' : 'bg-slate-900/60 text-slate-400'">
-              {{ stats.total_starred }}
+              {{ stats?.total_starred }}
             </span>
           </button>
         </div>
@@ -1265,7 +1265,7 @@
               <select v-model="batchRecheckScope" :disabled="batchRecheckState.is_running"
                 class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs">
                 <option value="all">全部模式的所有存量可用域名</option>
-                <option v-for="(cnt, m) in stats.mode_stats" :key="m" :value="m">
+                <option v-for="(cnt, m) in stats?.mode_stats" :key="m" :value="m">
                   仅复验模式: {{ m }} ({{ cnt }} 个可用)
                 </option>
               </select>
@@ -1515,7 +1515,7 @@
   </div>
 
   <script>
-    const { createApp, ref, computed, onMounted } = Vue;
+    const { createApp, ref, computed, onMounted, watch } = Vue;
 
     createApp({
       setup() {
