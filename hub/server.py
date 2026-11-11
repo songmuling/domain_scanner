@@ -818,6 +818,120 @@ def check_verisign_rdap(domain):
         return False, f"网络错误: {str(e)}"
     return False, "未知状态"
 
+def inspect_domain_rdap(domain):
+    """单域名权威穿透深度查验 (Verisign RDAP 权威根库，支持详细注册商与时间节点解析)"""
+    url = f"https://rdap.verisign.com/com/v1/domain/{domain.lower()}"
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "DomainHub-Inspector/2.0", "Accept": "application/rdap+json"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5.0, context=ssl_context) as resp:
+            if resp.status == 200:
+                body = resp.read().decode("utf-8", errors="replace")
+                data = json.loads(body)
+
+                # 解析注册商 Registrar
+                registrar = "未知注册商"
+                for ent in data.get("entities", []):
+                    if "registrar" in ent.get("roles", []):
+                        vcard = ent.get("vcardArray", [])
+                        if len(vcard) > 1:
+                            for item in vcard[1]:
+                                if len(item) > 3 and item[0] == "fn":
+                                    registrar = item[3]
+                                    break
+
+                # 解析关键时间节点 Events
+                events = {}
+                for ev in data.get("events", []):
+                    action = ev.get("eventAction", "")
+                    date_val = ev.get("eventDate", "")
+                    if action and date_val:
+                        clean_date = date_val.replace("T", " ").replace("Z", "").split(".")[0]
+                        events[action] = clean_date
+
+                # 解析 DNS Nameservers
+                nameservers = []
+                for ns in data.get("nameservers", []):
+                    ns_name = ns.get("ldhName")
+                    if ns_name:
+                        nameservers.append(ns_name.lower())
+
+                # 解析域名状态
+                statuses = data.get("status", [])
+
+                return {
+                    "available": False,
+                    "reason": f"已注册 · 注册商: {registrar}",
+                    "rdap": {
+                        "registrar": registrar,
+                        "created_at": events.get("registration", ""),
+                        "expires_at": events.get("expiration", ""),
+                        "updated_at": events.get("last changed", ""),
+                        "nameservers": nameservers,
+                        "statuses": statuses
+                    }
+                }
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {
+                "available": True,
+                "reason": "404 权威未注册 (可立即抢注)",
+                "rdap": None
+            }
+        elif e.code == 429:
+            return {
+                "available": None,
+                "error": "Verisign RDAP 接口触发访问频率限制，请稍候重试",
+                "reason": "429 访问受限"
+            }
+        return {
+            "available": None,
+            "error": f"RDAP 权威根服务器返回 HTTP {e.code}",
+            "reason": f"HTTP {e.code}"
+        }
+    except Exception as e:
+        return {
+            "available": None,
+            "error": f"网络连线异常: {str(e)}",
+            "reason": "网络异常"
+        }
+    return {
+        "available": None,
+        "error": "未能获取权威状态",
+        "reason": "未知异常"
+    }
+
+def resolve_candidate_modes(selected_lengths, chk_letter, chk_digit, chk_hyphen):
+    """根据多选长度和字符组成，精准解析为数据库标准 mode 列表，直接命中复合覆盖索引"""
+    all_or_none = (chk_letter and chk_digit and chk_hyphen) or (not chk_letter and not chk_digit and not chk_hyphen)
+
+    if all_or_none:
+        types = ["letter", "num", "mix", "letter-", "num-", "mix-"]
+    else:
+        bases = []
+        if chk_letter and chk_digit:
+            bases = ["letter", "num", "mix"]
+        elif chk_letter:
+            bases = ["letter"]
+        elif chk_digit:
+            bases = ["num"]
+        else:
+            bases = ["letter", "num", "mix"]
+
+        if chk_hyphen:
+            types = [f"{b}-" for b in bases]
+        else:
+            types = bases
+
+    target_lengths = selected_lengths if selected_lengths else [3, 4, 5, 6, 7, 8]
+    modes = []
+    for l in target_lengths:
+        for t in types:
+            modes.append(f"{l}{t}")
+    return modes
+
 BATCH_RECHECK_STATE = {
     "is_running": False,
     "mode": "",
@@ -971,7 +1085,7 @@ def build_domain_filters(params):
         where_clauses.append("status = ?")
         bind_params.append(status)
 
-    # 2. 字符位数多选维度 (支持 3, 4, 5, 6 等多个勾选框，智能匹配前缀模式及纯字符长度)
+    # 2. 字符位数与字符组成联合维度优化 (直接映射到标准 mode 联合索引，杜绝千万行全表扫描与字符串计算)
     raw_lengths = params.get("lengths", []) + params.get("length", [])
     selected_lengths = []
     for item in raw_lengths:
@@ -981,54 +1095,27 @@ def build_domain_filters(params):
                 selected_lengths.append(int(part))
     selected_lengths = sorted(list(set(selected_lengths)))
 
-    if selected_lengths:
-        len_or_clauses = []
-        for l_val in selected_lengths:
-            len_or_clauses.append("(mode LIKE ? OR length(substr(domain, 1, instr(domain, '.') - 1)) = ? OR length(replace(substr(domain, 1, instr(domain, '.') - 1), '-', '')) = ?)")
-            bind_params.extend([f"{l_val}%", l_val, l_val])
-        where_clauses.append("(" + " OR ".join(len_or_clauses) + ")")
-
-    # 3. 字符组成维度 (字母 / 数字 / 连字符 三复选框模式)
     has_new_char_param = "letters" in params or "digits" in params or "hyphen" in params
     if has_new_char_param:
         chk_letter = params.get("letters", ["0"])[0] in ("1", "true")
         chk_digit = params.get("digits", ["0"])[0] in ("1", "true")
         chk_hyphen = params.get("hyphen", ["0"])[0] in ("1", "true")
-
-        # 若 3 项全选或全不选，则代表不限制字符组成
-        all_or_none = (chk_letter and chk_digit and chk_hyphen) or (not chk_letter and not chk_digit and not chk_hyphen)
-        if not all_or_none:
-            # 连字符判定
-            if chk_hyphen:
-                where_clauses.append("domain LIKE '%-%'")
-            else:
-                where_clauses.append("domain NOT LIKE '%-%'")
-
-            # 字母与数字判定
-            name_expr = "substr(domain, 1, instr(domain, '.') - 1)"
-            if chk_letter and not chk_digit:
-                where_clauses.append(f"{name_expr} NOT GLOB '*[0-9]*'")
-            elif chk_digit and not chk_letter:
-                where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} NOT GLOB '*[a-z]*'")
     else:
-        # 兼容旧单选参数 char_type / has_hyphen
         char_type_param = params.get("char_type", [""])[0].strip()
         leg_hyphen = params.get("has_hyphen", [""])[0].strip()
-        name_expr = "substr(domain, 1, instr(domain, '.') - 1)"
-        if char_type_param == "letter":
-            where_clauses.append(f"{name_expr} NOT GLOB '*[0-9]*'")
-        elif char_type_param == "num":
-            where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} NOT GLOB '*[a-z]*'")
-        elif char_type_param == "mix":
-            where_clauses.append(f"{name_expr} GLOB '*[0-9]*' AND {name_expr} GLOB '*[a-z]*'")
+        chk_letter = char_type_param in ("letter", "mix")
+        chk_digit = char_type_param in ("num", "mix")
+        chk_hyphen = leg_hyphen == "1"
 
-        if leg_hyphen == "1":
-            where_clauses.append("domain LIKE '%-%'")
-        elif leg_hyphen == "0":
-            where_clauses.append("domain NOT LIKE '%-%'")
+    all_or_none = (chk_letter and chk_digit and chk_hyphen) or (not chk_letter and not chk_digit and not chk_hyphen)
 
-    # 兼容历史 mode 传参 (若未指定维度，但指定了具体 mode)
-    if not selected_lengths and not has_new_char_param and not params.get("char_type", [""])[0] and mode and mode != "all":
+    if selected_lengths or not all_or_none:
+        c_modes = resolve_candidate_modes(selected_lengths, chk_letter, chk_digit, chk_hyphen)
+        if c_modes:
+            placeholders = ",".join("?" for _ in c_modes)
+            where_clauses.append(f"mode IN ({placeholders})")
+            bind_params.extend(c_modes)
+    elif mode and mode != "all":
         where_clauses.append("mode = ?")
         bind_params.append(mode)
 
@@ -1318,15 +1405,33 @@ class HubHandler(BaseHTTPRequestHandler):
             limit = min(200, max(10, int(params.get("limit", ["50"])[0])))
             offset = (page - 1) * limit
 
+            has_complex_filters = bool(
+                params.get("q", [""])[0].strip() or
+                params.get("has_vowel", ["0"])[0] == "1" or
+                params.get("exclude_rare", ["0"])[0] == "1" or
+                params.get("prefix", [""])[0].strip() or
+                params.get("suffix", [""])[0].strip() or
+                params.get("repeat_count", [""])[0].strip() or
+                params.get("seq_count", [""])[0].strip() or
+                params.get("pattern", [""])[0].strip() or
+                params.get("pronounceable", ["0"])[0] in ("1", "true")
+            )
+
             with _STATS_LOCK:
                 cached_data = dict(_CACHED_DOMAIN_STATS)
             with get_db() as conn:
                 cur = conn.cursor()
-                # 极速快显优化：当没有自定义复杂过滤、仅浏览"全部可用"或"收藏星标"时，直接命中统计缓存，杜绝 350 万行全表扫描 COUNT
+                # 极速快显优化：当没有自定义复杂过滤、仅浏览"全部可用"、"收藏星标"或按模式维度多选时，直接命中内存统计缓存，杜绝千万行全表扫描 COUNT
                 if (not where_sql or where_sql == "WHERE status = ?") and bind_params == ["available"]:
                     total_count = cached_data.get("total_available", 0)
                 elif where_sql == "WHERE is_starred = 1" and not bind_params:
                     total_count = cached_data.get("total_starred", 0)
+                elif not has_complex_filters and where_sql.startswith("WHERE status = ? AND mode IN (") and bind_params and bind_params[0] == "available":
+                    modes_to_sum = bind_params[1:]
+                    mode_stats = cached_data.get("mode_stats", {})
+                    total_count = sum(mode_stats.get(m, 0) for m in modes_to_sum)
+                elif not has_complex_filters and where_sql == "WHERE status = ? AND mode = ?" and bind_params and bind_params[0] == "available":
+                    total_count = cached_data.get("mode_stats", {}).get(bind_params[1], 0)
                 else:
                     cur.execute(f"SELECT COUNT(*) FROM domains {where_sql};", bind_params)
                     total_count = cur.fetchone()[0]
@@ -2016,6 +2121,118 @@ class HubHandler(BaseHTTPRequestHandler):
         if path == "/api/domain/batch_recheck/stop":
             BATCH_RECHECK_STATE["is_running"] = False
             self.send_json({"code": 0, "msg": "批量复验任务已请求停止"})
+            return
+
+        # 7. 单域名权威深度即验 API (形态 A)
+        if path == "/api/domain/inspect":
+            data = self.read_json_body()
+            raw_d = data.get("domain", "").strip().lower()
+            # 协议与格式清洗
+            raw_d = re.sub(r"^https?://", "", raw_d)
+            raw_d = re.sub(r"^//", "", raw_d)
+            raw_d = raw_d.split("/")[0].split(":")[0].strip()
+
+            if not raw_d:
+                self.send_json({"code": 1, "msg": "请输入待查域名或字符前缀"}, 400)
+                return
+
+            if "." not in raw_d:
+                target_domain = f"{raw_d}.com"
+            else:
+                target_domain = raw_d
+
+            # 1. 查询本地数据库收录情况
+            local_record = None
+            with get_db() as conn:
+                cur = conn.cursor()
+                cur.execute("""
+                SELECT domain, mode, node_id, status, is_starred, reason, datetime(created_at, '+8 hours') as created_at
+                FROM domains WHERE domain = ?;
+                """, (target_domain,))
+                row = cur.fetchone()
+                if row:
+                    local_record = dict(row)
+
+            # 2. 实时穿透 Verisign RDAP 权威根库
+            inspect_res = inspect_domain_rdap(target_domain)
+
+            self.send_json({
+                "code": 0,
+                "data": {
+                    "domain": target_domain,
+                    "available": inspect_res.get("available"),
+                    "reason": inspect_res.get("reason"),
+                    "error": inspect_res.get("error"),
+                    "rdap": inspect_res.get("rdap"),
+                    "local": local_record
+                }
+            })
+            return
+
+        # 7.1 单域名立即加入/取消星标收藏 (若不存在于本地库则自动按标准模式收录入库)
+        if path == "/api/domain/star_direct":
+            data = self.read_json_body()
+            target_domain = data.get("domain", "").strip().lower()
+            target_domain = re.sub(r"^https?://", "", target_domain)
+            target_domain = re.sub(r"^//", "", target_domain)
+            target_domain = target_domain.split("/")[0].split(":")[0].strip()
+            if not target_domain:
+                self.send_json({"code": 1, "msg": "域名不能为空"}, 400)
+                return
+            if "." not in target_domain:
+                target_domain = f"{target_domain}.com"
+
+            is_starred = 1 if data.get("starred", 1) in (1, "1", True) else 0
+
+            # 推导标准特征与 mode
+            clean_name = clean_domain_name(target_domain)
+            c_type = "num" if clean_name.isdigit() else ("letter" if clean_name.isalpha() else "mix")
+            c_hyphen = "-" if "-" in clean_name else ""
+            mode_val = f"{len(clean_name)}{c_type}{c_hyphen}"
+            feats = analyze_domain_features(target_domain)
+
+            with DB_LOCK:
+                with get_db() as conn:
+                    conn.execute("""
+                    INSERT INTO domains (
+                        domain, mode, node_id, status, is_starred, reason,
+                        max_repeat, max_seq, max_seq_asc, max_seq_desc,
+                        is_palindrome, patterns, is_pronounceable, has_vowel, is_clean,
+                        created_at, updated_at
+                    )
+                    VALUES (?, ?, 'inspector', 'available', ?, '手动查验收藏', ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ON CONFLICT(domain) DO UPDATE SET
+                        is_starred = excluded.is_starred,
+                        status = CASE WHEN domains.status = 'registered' THEN 'available' ELSE domains.status END,
+                        updated_at = CURRENT_TIMESTAMP;
+                    """, (
+                        target_domain, mode_val, is_starred,
+                        feats["max_repeat"], feats["max_seq"], feats["max_seq_asc"], feats["max_seq_desc"],
+                        feats["is_palindrome"], feats["patterns"], feats["is_pronounceable"], feats["has_vowel"], feats["is_clean"]
+                    ))
+                    conn.commit()
+
+            # 刷新内存缓存统计
+            with _STATS_LOCK:
+                if is_starred:
+                    _CACHED_DOMAIN_STATS["total_starred"] = _CACHED_DOMAIN_STATS.get("total_starred", 0) + 1
+                else:
+                    _CACHED_DOMAIN_STATS["total_starred"] = max(0, _CACHED_DOMAIN_STATS.get("total_starred", 0) - 1)
+
+            msg = "已成功加入星标收藏！" if is_starred else "已取消星标收藏"
+            self.send_json({"code": 0, "msg": msg, "domain": target_domain, "is_starred": is_starred})
+            return
+
+        # 7.2 同步域名状态为已注册
+        if path == "/api/domain/sync_registered":
+            data = self.read_json_body()
+            target_domain = data.get("domain", "").strip().lower()
+            reason = data.get("reason", "RDAP权威证实已被注册")
+            with DB_LOCK:
+                with get_db() as conn:
+                    conn.execute("UPDATE domains SET status = 'registered', reason = ?, updated_at = CURRENT_TIMESTAMP WHERE domain = ?;", (reason, target_domain))
+                    conn.commit()
+            self.send_json({"code": 0, "msg": "本地状态已同步为已注册", "domain": target_domain})
             return
 
         self.send_error(404, "Endpoint Not Found")
