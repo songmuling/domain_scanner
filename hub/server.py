@@ -2442,7 +2442,15 @@ class HubHandler(BaseHTTPRequestHandler):
                 use_letters = 1
                 use_digits = 1
                 use_hyphen = 1 if '-' in template_str else 0
-                mode = f"tpl_{re.sub(r'[^a-zA-Z0-9]', '_', template_str)}"
+                clean_tag = re.sub(r'[^a-zA-Z0-9]', '_', template_str).strip('_')
+                clean_tag = re.sub(r'_+', '_', clean_tag)
+                if len(clean_tag) <= 12:
+                    mode = f"tpl_{clean_tag}"
+                else:
+                    import hashlib
+                    h = hashlib.md5(template_str.encode()).hexdigest()[:6]
+                    prefix = clean_tag[:8] if clean_tag else "custom"
+                    mode = f"tpl_{prefix}_{h}"
             else:
                 template_str = None
                 if length not in (3, 4, 5, 6):

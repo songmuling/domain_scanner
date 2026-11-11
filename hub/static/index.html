@@ -606,19 +606,22 @@
           <span class="text-2xl animate-spin inline-block">⚙️</span>
           <div>
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="text-xs font-semibold text-indigo-300 uppercase task-label">活跃扫描任务:</span>
+              <span class="text-xs font-semibold text-indigo-300 uppercase task-label whitespace-nowrap">活跃扫描任务:</span>
               <span
-                class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono task-badge">
-                {{ t.template ? '🎯 定向模板: ' + t.template : t.mode }} ({{ t.suffix || 'com' }})
+                class="px-2.5 py-0.5 rounded bg-indigo-600/30 border border-indigo-500/50 text-indigo-200 text-xs font-bold font-mono task-badge max-w-full sm:max-w-md md:max-w-xl truncate inline-block"
+                :title="t.template ? '完整定向表达式: ' + t.template : t.mode">
+                {{ formatTaskTitle(t) }} ({{ t.suffix || 'com' }})
               </span>
               <span v-if="t.storage_filter && t.storage_filter.enabled"
-                class="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold">
+                class="px-2 py-0.5 rounded bg-emerald-600/30 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold whitespace-nowrap">
                 🎯 精选先筛后查
               </span>
-              <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono task-nodes">
+              <span class="px-2 py-0.5 text-[11px] rounded bg-slate-800/80 text-slate-300 border border-slate-700/60 font-mono task-nodes whitespace-nowrap">
                 {{ t.running_shards || 0 }}/{{ t.total_shards || 0 }} 节点运行中
               </span>
-              <span class="text-[11px] text-slate-500 font-mono hidden md:inline task-id">ID: {{ t.task_id }}</span>
+              <span class="text-[11px] text-slate-500 font-mono hidden md:inline task-id whitespace-nowrap" :title="'完整任务ID: ' + t.task_id">
+                ID: {{ t.task_id && t.task_id.length > 28 ? t.task_id.slice(0, 24) + '...' : t.task_id }}
+              </span>
             </div>
             <div class="text-xs text-slate-400 mt-1.5 flex items-center gap-3 sm:gap-4 flex-wrap task-detail">
               <span>进度: <b class="text-white font-mono task-progress-num">{{ (t.total > 0 ? Math.min(t.scanned || 0, t.total) : (t.scanned || 0)).toLocaleString() }} / {{ (t.total || 0).toLocaleString() }}</b> ({{ Math.min(100.0, Number(t.progress_pct || 0)).toFixed(1) }}%)</span>
@@ -698,34 +701,35 @@
         <div v-for="node in nodes" :key="node.node_id"
           class="bg-[#131b2e] border border-slate-800 rounded-xl p-3.5 hover:border-slate-700 transition">
           <!-- 节点头部 -->
-          <div class="flex items-center justify-between">
-            <div class="flex items-center gap-2">
+          <div class="flex items-center justify-between gap-1.5">
+            <div class="flex items-center gap-2 shrink-0">
               <span class="relative flex h-2 w-2">
                 <span v-if="node.status === 'running'"
                   class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
                 <span class="relative inline-flex rounded-full h-2 w-2"
                   :class="node.status === 'running' ? 'bg-emerald-400' : (node.status === 'completed' ? 'bg-sky-400' : (node.status === 'idle' ? 'bg-amber-400' : 'bg-slate-500'))"></span>
               </span>
-              <span class="font-bold text-sm text-slate-200" :title="node.agent_uuid ? '物理指纹: ' + node.agent_uuid : '暂未绑定物理指纹'">{{ node.node_id }}</span>
+              <span class="font-bold text-sm text-slate-200 whitespace-nowrap" :title="node.agent_uuid ? '物理指纹: ' + node.agent_uuid : '暂未绑定物理指纹'">{{ node.node_id }}</span>
             </div>
-            <div class="flex items-center gap-1.5">
+            <div class="flex items-center gap-1.5 min-w-0 justify-end">
               <span v-if="node.status === 'running'"
-                class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono">
-                {{ node.mode }} <span v-if="node.shard">({{ node.shard }})</span>
+                :title="'当前模式: ' + (node.mode || '') + (node.shard ? ' (' + node.shard + ')' : '')"
+                class="px-2 py-0.5 text-[10px] rounded-full bg-indigo-950/80 text-indigo-300 border border-indigo-800/50 font-mono truncate max-w-[130px] sm:max-w-[160px] inline-block">
+                {{ formatNodeMode(node.mode) }} <span v-if="node.shard">({{ node.shard }})</span>
               </span>
               <span v-else-if="node.status === 'completed'"
-                class="px-2 py-0.5 text-[10px] rounded-full bg-sky-950/60 text-sky-300 border border-sky-800/40">
+                class="px-2 py-0.5 text-[10px] rounded-full bg-sky-950/60 text-sky-300 border border-sky-800/40 shrink-0">
                 已完成
               </span>
               <span v-else-if="node.status === 'idle'"
-                class="px-2 py-0.5 text-[10px] rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/40">
+                class="px-2 py-0.5 text-[10px] rounded-full bg-amber-950/60 text-amber-300 border border-amber-800/40 shrink-0">
                 待命中
               </span>
               <span v-else
-                class="px-2 py-0.5 text-[10px] rounded-full bg-slate-800 text-slate-500 border border-slate-700/60">
+                class="px-2 py-0.5 text-[10px] rounded-full bg-slate-800 text-slate-500 border border-slate-700/60 shrink-0">
                 离线
               </span>
-              <button @click="deleteNode(node.node_id)" class="text-slate-500 hover:text-red-400 text-xs ml-1"
+              <button @click="deleteNode(node.node_id)" class="text-slate-500 hover:text-red-400 text-xs ml-0.5 shrink-0"
                 title="清理节点记录">✕</button>
             </div>
           </div>
@@ -1350,7 +1354,7 @@
                 </div>
                 <div class="text-[11px] font-medium"
                   :class="node.status === 'running' ? 'text-indigo-400' : (node.status === 'completed' ? 'text-sky-400' : 'text-emerald-400')">
-                  {{ node.status === 'running' ? ('⚡ 扫描中: ' + (node.mode || '') + (node.shard ? ' (' + node.shard + ')' : '')) : (node.status === 'completed' ? '🔵 分片已完成' : '🟢 在线待命') }}
+                  {{ node.status === 'running' ? ('⚡ 扫描中: ' + formatNodeMode(node.mode) + (node.shard ? ' (' + node.shard + ')' : '')) : (node.status === 'completed' ? '🔵 分片已完成' : '🟢 在线待命') }}
                 </div>
               </label>
 
@@ -2272,6 +2276,30 @@
           return [];
         });
 
+        const formatNodeMode = (mode) => {
+          if (!mode) return '';
+          if (mode.startsWith('tpl_')) {
+            const raw = mode.replace(/^tpl_+/, '');
+            if (raw.length <= 8 && !raw.includes('_')) {
+              return `🎯 ${raw}`;
+            }
+            return '🎯 定向模板';
+          }
+          return mode;
+        };
+
+        const formatTaskTitle = (task) => {
+          if (!task) return '';
+          if (task.template) {
+            const tpl = task.template;
+            if (tpl.length <= 22) {
+              return `🎯 定向: ${tpl}`;
+            }
+            return `🎯 定向: ${tpl.slice(0, 14)}...${tpl.slice(-6)}`;
+          }
+          return task.mode || '扫描任务';
+        };
+
         const canDispatch = computed(() => {
           const hasChars = dispatchForm.value.use_letters || dispatchForm.value.use_digits;
           const hasSelected = selectedNodeList.value.length > 0;
@@ -2880,6 +2908,7 @@
           activeAgentTab, isEditingToken, newTokenInput,
           saveNewToken, copyDockerRunCmd, copyComposeYaml, copyPythonCmd,
           submitDispatch, stopClusterTask, deleteNode, activeTaskList,
+          formatNodeMode, formatTaskTitle,
           openTokenModal,
           openBatchRecheckModal, batchRecheckScope, batchRecheckState,
           startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
