@@ -949,7 +949,7 @@ def resolve_candidate_modes(selected_lengths, chk_letter, chk_digit, chk_hyphen)
     else:
         bases = []
         if chk_letter and chk_digit:
-            bases = ["letter", "num", "mix"]
+            bases = ["mix"]
         elif chk_letter:
             bases = ["letter"]
         elif chk_digit:
@@ -1153,14 +1153,20 @@ def build_domain_filters(params):
             where_clauses.append(f"mode IN ({placeholders})")
             bind_params.extend(c_modes)
 
-        # 双重硬核防护：若用户未勾选数字/字母/连字符，针对域名主体(去除后缀)追加字符硬过滤，杜绝任何历史遗留错位数据
+        # 双重硬核防护：针对域名主体(去除后缀)追加字符硬过滤，杜绝任何历史遗留错位数据
         slug_expr = "CASE WHEN INSTR(domains.domain, '.') > 0 THEN SUBSTR(domains.domain, 1, INSTR(domains.domain, '.') - 1) ELSE domains.domain END"
-        if not chk_digit and (chk_letter or chk_hyphen):
+        if chk_letter and chk_digit:
+            where_clauses.append(f"{slug_expr} GLOB '*[0-9]*'")
+            where_clauses.append(f"{slug_expr} GLOB '*[a-zA-Z]*'")
+        elif not chk_digit and (chk_letter or chk_hyphen):
             where_clauses.append(f"{slug_expr} NOT GLOB '*[0-9]*'")
-        if not chk_letter and (chk_digit or chk_hyphen):
+        elif not chk_letter and (chk_digit or chk_hyphen):
             where_clauses.append(f"{slug_expr} NOT GLOB '*[a-zA-Z]*'")
+
         if not chk_hyphen:
             where_clauses.append(f"{slug_expr} NOT GLOB '*-*'")
+        elif not chk_letter and not chk_digit:
+            where_clauses.append(f"{slug_expr} GLOB '*-*'")
     elif mode and mode != "all":
         where_clauses.append("mode = ?")
         bind_params.append(mode)
