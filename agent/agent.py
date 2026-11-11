@@ -11,6 +11,7 @@ Domain Agent - 分布式扫描集群客户端 (Nezha Agent 风格)
 import os
 import sys
 import time
+import datetime
 import json
 import socket
 import platform
@@ -31,10 +32,10 @@ def get_agent_version():
     try:
         cur_file = os.path.abspath(__file__)
         mtime = os.path.getmtime(cur_file)
-        dt = datetime.datetime.fromtimestamp(mtime)
-        return dt.strftime("26.%m%d.%H%M")
-    except Exception:
-        return "26.1111.1000"
+        return time.strftime("26.%m%d.%H%M", time.localtime(mtime))
+    except Exception as e:
+        sys.stderr.write(f"[*] 获取动态版本号异常: {e}\n")
+        return "26.1111.1015"
 
 AGENT_VERSION = get_agent_version()
 
