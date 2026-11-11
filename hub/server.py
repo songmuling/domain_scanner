@@ -168,23 +168,76 @@ def analyze_domain_features(domain):
     # 3. 对称回文 (3字及以上)
     is_palindrome = 1 if (len(clean_name) >= 3 and clean_name == clean_name[::-1]) else 0
 
-    # 4. 特殊形态结构 (AABB / ABAB / ABBA / AAAB / BAAA)
+    # 4. 特殊形态结构全谱系 (方案 A: 严格区分 4位/5位/6位 形态家族，杜绝中间滑动乱码)
     matched_pats = []
-    if len(clean_name) >= 4:
-        for i in range(len(clean_name) - 3):
-            w = clean_name[i:i + 4]
-            c1, c2, c3, c4 = w[0], w[1], w[2], w[3]
-            if c1 == c2 and c3 == c4 and c1 != c3 and "aabb" not in matched_pats:
-                matched_pats.append("aabb")
-            if c1 == c3 and c2 == c4 and c1 != c2 and "abab" not in matched_pats:
-                matched_pats.append("abab")
-            if c1 == c4 and c2 == c3 and c1 != c2 and "abba" not in matched_pats:
-                matched_pats.append("abba")
-            if c1 == c2 == c3 and c1 != c4 and "aaab" not in matched_pats:
-                matched_pats.append("aaab")
-            if c2 == c3 == c4 and c1 != c2 and "baaa" not in matched_pats:
-                matched_pats.append("baaa")
-    patterns_str = ",".join(matched_pats)
+    L = len(clean_name)
+    if L == 4:
+        c1, c2, c3, c4 = clean_name[0], clean_name[1], clean_name[2], clean_name[3]
+        if c1 == c2 and c3 == c4 and c1 != c3:
+            matched_pats.extend(["aabb", "pairs"])
+        if c1 == c3 and c2 == c4 and c1 != c2:
+            matched_pats.extend(["abab", "alternating"])
+        if c1 == c4 and c2 == c3 and c1 != c2:
+            matched_pats.append("abba")
+        if (c1 == c2 == c3 and c1 != c4) or (c2 == c3 == c4 and c1 != c2):
+            matched_pats.extend(["aaab", "baaa", "one_diff"])
+    elif L == 5:
+        c1, c2, c3, c4, c5 = clean_name[0], clean_name[1], clean_name[2], clean_name[3], clean_name[4]
+        # 5位专属顶级形态：葫芦双三连 (AAABB / AABBB)
+        if (c1 == c2 == c3 and c4 == c5 and c1 != c4) or (c1 == c2 and c3 == c4 == c5 and c1 != c3):
+            matched_pats.extend(["aaabb", "aabbb", "pairs"])
+        if c1 == c2 and c4 == c5 and c1 != c3:
+            matched_pats.append("aabaa")
+        # 5位专属交替 (ABABA)
+        if c1 == c3 == c5 and c2 == c4 and c1 != c2:
+            matched_pats.extend(["ababa", "alternating"])
+        # 5位首尾贴边 4 位对子 (AABB+x 或 x+AABB) - 仅作为子形态标记，不混淆AAABB葫芦
+        w_head, w_tail = clean_name[:4], clean_name[1:]
+        if (w_head[0] == w_head[1] and w_head[2] == w_head[3] and w_head[0] != w_head[2]) or \
+           (w_tail[0] == w_tail[1] and w_tail[2] == w_tail[3] and w_tail[0] != w_tail[2]):
+            matched_pats.append("aabb")
+        if (w_head[0] == w_head[2] and w_head[1] == w_head[3] and w_head[0] != w_head[1]) or \
+           (w_tail[0] == w_tail[2] and w_tail[1] == w_tail[3] and w_tail[0] != w_tail[1]):
+            matched_pats.append("abab")
+        # 4带1 (AAAAB / BAAAA)
+        if (c1 == c2 == c3 == c4 and c1 != c5) or (c2 == c3 == c4 == c5 and c1 != c2):
+            matched_pats.extend(["aaaab", "baaaa", "one_diff"])
+    elif L == 6:
+        c1, c2, c3, c4, c5, c6 = clean_name[0], clean_name[1], clean_name[2], clean_name[3], clean_name[4], clean_name[5]
+        # 6位专属顶级形态
+        # 1. AAABBB (三连双豹)
+        if c1 == c2 == c3 and c4 == c5 == c6 and c1 != c4:
+            matched_pats.extend(["aaabbb", "pairs"])
+        # 2. AABBCC (三连对 / 步步高)
+        if c1 == c2 and c3 == c4 and c5 == c6 and len({c1, c3, c5}) == 3:
+            matched_pats.extend(["aabbcc", "pairs"])
+        # 3. ABABAB (三周期交替)
+        if c1 == c3 == c5 and c2 == c4 and c1 != c2:
+            matched_pats.extend(["ababab", "alternating"])
+        # 4. ABCABC (重叠双胞胎)
+        if c1 == c4 and c2 == c5 and c3 == c6 and len({c1, c2, c3}) >= 2 and (c1 != c2 or c2 != c3):
+            matched_pats.extend(["abcabc", "twins"])
+        # 6位首尾贴边 4 位对子 (AABB+xx 或 xx+AABB) - 仅作为子形态标记，不混淆AAABBB/AABBCC双豹
+        w_head, w_tail = clean_name[:4], clean_name[2:]
+        if (w_head[0] == w_head[1] and w_head[2] == w_head[3] and w_head[0] != w_head[2]) or \
+           (w_tail[0] == w_tail[1] and w_tail[2] == w_tail[3] and w_tail[0] != w_tail[2]):
+            matched_pats.append("aabb")
+        if (w_head[0] == w_head[2] and w_head[1] == w_head[3] and w_head[0] != w_head[1]) or \
+           (w_tail[0] == w_tail[2] and w_tail[1] == w_tail[3] and w_tail[0] != w_tail[1]):
+            matched_pats.append("abab")
+        # 5带1 (AAAAAB / BAAAAA)
+        if (c1 == c2 == c3 == c4 == c5 and c1 != c6) or (c2 == c3 == c4 == c5 == c6 and c1 != c2):
+            matched_pats.extend(["aaaaab", "baaaaa", "one_diff"])
+    elif L > 6:
+        # 更长位数首尾贴边对子
+        w_head, w_tail = clean_name[:4], clean_name[-4:]
+        if (w_head[0] == w_head[1] and w_head[2] == w_head[3] and w_head[0] != w_head[2]) or \
+           (w_tail[0] == w_tail[1] and w_tail[2] == w_tail[3] and w_tail[0] != w_tail[2]):
+            matched_pats.append("aabb")
+        if (w_head[0] == w_head[2] and w_head[1] == w_head[3] and w_head[0] != w_head[1]) or \
+           (w_tail[0] == w_tail[2] and w_tail[1] == w_tail[3] and w_tail[0] != w_tail[1]):
+            matched_pats.append("abab")
+    patterns_str = ",".join(list(set(matched_pats)))
 
     # 5. 自然发音 / 易读双拼 (元辅交替，不连续出现>=3辅音或>=3元音)
     is_pron = 0
@@ -1322,14 +1375,80 @@ def build_domain_filters(params):
             where_clauses.append("max_seq >= ?")
             bind_params.append(s_cnt)
 
-    # 8. 靓号规则：形态结构 (回文 palindrome, AABB, ABAB, ABBA, AAAB, BAAA 等)
+    # 8. 靓号规则：形态结构 (方案 A: 形态家族自适应，兼具极致性能与多长度兼顾)
     pattern = params.get("pattern", [""])[0].strip().lower()
     if pattern:
         if pattern == "palindrome":
             where_clauses.append("is_palindrome = 1")
+        elif pattern == "pairs":
+            # 叠字双叠家族：
+            # 4位: AABB
+            # 5位: AAABB / AABBB
+            # 6位: AAABBB / AABBCC
+            if 6 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
+            elif 5 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aaabb%' OR patterns LIKE '%aabbb%')")
+            elif 4 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%pairs%' OR patterns LIKE '%aabb%')")
+            else:
+                where_clauses.append("(patterns LIKE '%pairs%' OR (mode LIKE '4%' AND patterns LIKE '%aabb%') OR patterns LIKE '%aaabbb%' OR patterns LIKE '%aabbcc%')")
+        elif pattern == "alternating":
+            # 周期交替家族：
+            # 4位: ABAB
+            # 5位: ABABA
+            # 6位: ABABAB
+            if 6 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababab%')")
+            elif 5 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%ababa%')")
+            elif 4 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%alternating%' OR patterns LIKE '%abab%')")
+            else:
+                where_clauses.append("(patterns LIKE '%alternating%' OR (mode LIKE '4%' AND patterns LIKE '%abab%') OR patterns LIKE '%ababab%')")
+        elif pattern == "twins":
+            # 重叠双胞胎家族：6位专属 ABCABC
+            where_clauses.append("(patterns LIKE '%twins%' OR patterns LIKE '%abcabc%')")
+            if not selected_lengths:
+                p_modes = resolve_candidate_modes([6], chk_letter, chk_digit, chk_hyphen)
+                if p_modes:
+                    pl = ",".join("?" for _ in p_modes)
+                    where_clauses.append(f"mode IN ({pl})")
+                    bind_params.extend(p_modes)
+        elif pattern == "one_diff":
+            # 头尾带一/大豹：AAAB, BAAA, AAAAB, AAAAAB
+            if 6 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaaab%' OR patterns LIKE '%baaaaa%')")
+            elif 5 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaaab%' OR patterns LIKE '%baaaa%')")
+            elif 4 in selected_lengths and len(selected_lengths) == 1:
+                where_clauses.append("(patterns LIKE '%one_diff%' OR patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')")
+            else:
+                where_clauses.append("(patterns LIKE '%one_diff%' OR (mode LIKE '4%' AND (patterns LIKE '%aaab%' OR patterns LIKE '%baaa%')))")
         else:
             where_clauses.append("patterns LIKE ?")
             bind_params.append(f"%{pattern}%")
+
+            # 兼容具体形态的自动索引锚定
+            if not selected_lengths:
+                if pattern in ("aaabbb", "aabbcc", "ababab", "abcabc"):
+                    p_modes = resolve_candidate_modes([6], chk_letter, chk_digit, chk_hyphen)
+                    if p_modes:
+                        pl = ",".join("?" for _ in p_modes)
+                        where_clauses.append(f"mode IN ({pl})")
+                        bind_params.extend(p_modes)
+                elif pattern in ("aaabb", "aabbb", "aabaa", "ababa"):
+                    p_modes = resolve_candidate_modes([5], chk_letter, chk_digit, chk_hyphen)
+                    if p_modes:
+                        pl = ",".join("?" for _ in p_modes)
+                        where_clauses.append(f"mode IN ({pl})")
+                        bind_params.extend(p_modes)
+                elif pattern in ("abba", "aaab", "baaa"):
+                    p_modes = resolve_candidate_modes([4], chk_letter, chk_digit, chk_hyphen)
+                    if p_modes:
+                        pl = ",".join("?" for _ in p_modes)
+                        where_clauses.append(f"mode IN ({pl})")
+                        bind_params.extend(p_modes)
 
     # 9. 靓号规则：自然发音 (易读元音辅音交替双拼)
     pronounceable = params.get("pronounceable", ["0"])[0] == "1"

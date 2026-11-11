@@ -848,7 +848,7 @@
             </select>
             <select v-model="filterPattern" @change="page = 1; fetchDomains()"
               class="bg-slate-900 border border-slate-700/80 rounded-lg px-2 py-1 text-slate-200 text-xs focus:outline-none focus:border-indigo-500">
-              <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
+              <option v-for="opt in patternFamilyOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
 
@@ -1136,7 +1136,7 @@
                 <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
                   :class="{'is-active': dispatchForm.storage_filter.has_patterns}">
                   <input type="checkbox" v-model="dispatchForm.storage_filter.has_patterns" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>👥 叠字对子 <span class="filter-chip-sub text-[10px] font-mono">(AABB / ABAB)</span></span>
+                  <span>👥 叠字对子 <span class="filter-chip-sub text-[10px] font-mono">({{ dispatchForm.length === 6 ? 'AAABBB/AABBCC' : (dispatchForm.length === 5 ? 'AAABB/AABBB' : 'AABB/ABAB') }})</span></span>
                 </label>
                 <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
                   :class="{'is-active': dispatchForm.storage_filter.has_repeat}">
@@ -1713,15 +1713,45 @@
           { value: 'desc', label: '↘ 倒序' }
         ];
 
-        const patternOptions = [
-          { value: '', label: '不限形态' },
-          { value: 'palindrome', label: '🪞 回文' },
-          { value: 'aabb', label: '👯 AABB' },
-          { value: 'abab', label: '🎵 ABAB' },
-          { value: 'abba', label: '🥪 ABBA' },
-          { value: 'aaab', label: '👑 AAAB' },
-          { value: 'baaa', label: '🌟 BAAA' }
-        ];
+        const patternFamilyOptions = computed(() => {
+          const lens = filterLengths.value;
+          if (lens.length === 1 && lens[0] === 6) {
+            return [
+              { value: '', label: '不限形态' },
+              { value: 'pairs', label: '👯 叠字双叠 (AAABBB / AABBCC)' },
+              { value: 'alternating', label: '🎵 周期交替 (ABABAB)' },
+              { value: 'twins', label: '👬 重叠双胞胎 (ABCABC 如 123123)' },
+              { value: 'palindrome', label: '🥪 对称回文 (ABCCBA)' },
+              { value: 'one_diff', label: '👑 头尾大豹 (AAAAAB / BAAAAA)' }
+            ];
+          } else if (lens.length === 1 && lens[0] === 5) {
+            return [
+              { value: '', label: '不限形态' },
+              { value: 'pairs', label: '👯 叠字双叠 (葫芦 AAABB / AABBB)' },
+              { value: 'alternating', label: '🎵 周期交替 (ABABA)' },
+              { value: 'palindrome', label: '🥪 对称回文 (ABCBA)' },
+              { value: 'one_diff', label: '👑 头尾大豹 (AAAAB / BAAAA)' }
+            ];
+          } else if (lens.length === 1 && lens[0] === 4) {
+            return [
+              { value: '', label: '不限形态' },
+              { value: 'pairs', label: '👯 叠字双叠 (AABB)' },
+              { value: 'alternating', label: '🎵 周期交替 (ABAB)' },
+              { value: 'palindrome', label: '🥪 对称回文 (ABBA)' },
+              { value: 'one_diff', label: '👑 头尾带一 (AAAB / BAAA)' }
+            ];
+          } else {
+            return [
+              { value: '', label: '不限形态' },
+              { value: 'pairs', label: '👯 叠字双叠 (AABB / AAABB / AAABBB)' },
+              { value: 'alternating', label: '🎵 周期交替 (ABAB / ABABAB)' },
+              { value: 'twins', label: '👬 重叠双胞胎 (ABCABC 6位专属)' },
+              { value: 'palindrome', label: '🥪 对称回文 (4~6位全反转)' },
+              { value: 'one_diff', label: '👑 头尾大豹 (AAAB / AAAAAB)' }
+            ];
+          }
+        });
+        const patternOptions = patternFamilyOptions;
 
         const hasActiveFilter = computed(() => {
           return Boolean(
@@ -2145,7 +2175,14 @@
             const sf = dispatchForm.value.storage_filter;
             const patterns = [];
             if (sf.has_patterns) {
-              patterns.push('aabb', 'abab', 'abba');
+              const dLen = Number(dispatchForm.value.length);
+              if (dLen === 6) {
+                patterns.push('aaabbb', 'aabbcc', 'ababab', 'abcabc', 'aabb', 'abab');
+              } else if (dLen === 5) {
+                patterns.push('aaabb', 'aabbb', 'aabaa', 'ababa', 'aabb', 'abab');
+              } else {
+                patterns.push('aabb', 'abab', 'abba', 'aaab', 'baaa');
+              }
             }
             filterPayload = {
               enabled: true,
