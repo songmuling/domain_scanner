@@ -233,6 +233,18 @@
       border-color: #c7d2fe !important;
     }
 
+    html:not(.dark) .template-active-input {
+      background-color: #f5f3ff !important;
+      border-color: #6366f1 !important;
+      color: #1e1b4b !important;
+    }
+
+    html:not(.dark) .search-mode-pill-active {
+      background-color: #e0e7ff !important;
+      color: #4338ca !important;
+      border-color: #818cf8 !important;
+    }
+
     html:not(.dark) .bg-emerald-950\/80,
     html:not(.dark) .bg-emerald-950\/60,
     html:not(.dark) .bg-emerald-950\/40,
@@ -775,10 +787,19 @@
       <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
         <!-- 左侧输入与收藏 -->
         <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[300px]">
-          <!-- 搜索框 -->
-          <div class="relative flex-1 min-w-[200px] max-w-sm">
-            <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()" placeholder="🔍 搜索域名、包含关键字 (回车查询)..."
-              class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+          <!-- 搜索框 (支持关键词与定向模板掩码智能感知) -->
+          <div class="relative flex-1 min-w-[220px] max-w-sm">
+            <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()"
+              :placeholder="isSearchTemplateMode ? '🎯 模板模式: 如 DDDDDD, LL888 ...' : '🔍 搜关键字 (如: vip) 或模板 (如: DDDDDD)...'"
+              class="w-full bg-slate-900 border rounded-lg pl-3 pr-20 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+              :class="isSearchTemplateMode ? 'border-indigo-500/80 bg-indigo-950/20 template-active-input' : 'border-slate-700/80'">
+            <!-- 模式指示与切换小胶囊 -->
+            <button v-if="searchKeyword.trim()" type="button" @click="toggleSearchMode"
+              class="absolute right-1.5 top-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono transition flex items-center gap-0.5 cursor-pointer select-none"
+              :class="isSearchTemplateMode ? 'bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-600/60 search-mode-pill-active' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200'"
+              :title="isSearchTemplateMode ? '当前为【🎯 模板掩码】模式，点击切换为【🔤 纯字面量】' : '当前为【🔤 普通关键词】模式，点击切换为【🎯 模板掩码】'">
+              <span>{{ isSearchTemplateMode ? '🎯 模板' : '🔤 关键词' }}</span>
+            </button>
           </div>
           <!-- 前缀 -->
           <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="前缀如: ai-"
@@ -1971,7 +1992,13 @@
           if (isPronounceable.value) parts.push('双拼');
           if (hasVowel.value) parts.push('元音');
           if (excludeRare.value) parts.push('避冷门');
-          if (searchKeyword.value) parts.push(`"${searchKeyword.value}"`);
+          if (searchKeyword.value) {
+            if (isSearchTemplateMode.value) {
+              parts.push(`🎯 模板:${searchKeyword.value}`);
+            } else {
+              parts.push(`"${searchKeyword.value}"`);
+            }
+          }
           if (prefixFilter.value) parts.push(`前缀:${prefixFilter.value}`);
           if (suffixFilter.value) parts.push(`后缀:${suffixFilter.value}`);
           return parts.join(' · ');
@@ -1990,6 +2017,7 @@
           isPronounceable.value = false;
           currentMode.value = '';
           searchKeyword.value = '';
+          searchModeOverride.value = 'auto';
           prefixFilter.value = '';
           suffixFilter.value = '';
           hasVowel.value = false;
@@ -2021,6 +2049,40 @@
         };
 
         const searchKeyword = ref('');
+        const searchModeOverride = ref('auto'); // 'auto' | 'template' | 'literal'
+
+        const isSearchTemplateMode = computed(() => {
+          if (searchModeOverride.value !== 'auto') {
+            return searchModeOverride.value === 'template';
+          }
+          const s = (searchKeyword.value || '').trim();
+          if (!s) return false;
+          if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+            return false;
+          }
+          // 结构符号: [], {}, (), |, *, ?
+          if (/[\[\]\{\}\(\)\|\*\?]/.test(s)) return true;
+          // 大写占位符: L, D, V, C
+          if (/[LDVC]/.test(s)) return true;
+          return false;
+        });
+
+        const toggleSearchMode = () => {
+          if (isSearchTemplateMode.value) {
+            searchModeOverride.value = 'literal';
+          } else {
+            searchModeOverride.value = 'template';
+          }
+          page.value = 1;
+          fetchDomains();
+        };
+
+        watch(searchKeyword, (newVal) => {
+          if (!newVal) {
+            searchModeOverride.value = 'auto';
+          }
+        });
+
         const prefixFilter = ref('');
         const suffixFilter = ref('');
         const hasVowel = ref(false);
@@ -2506,6 +2568,7 @@
               page: page.value,
               limit: limit.value,
               q: searchKeyword.value,
+              search_mode: isSearchTemplateMode.value ? 'template' : (searchModeOverride.value === 'literal' ? 'literal' : 'auto'),
               prefix: prefixFilter.value,
               suffix: suffixFilter.value,
               has_vowel: hasVowel.value ? '1' : '0',
@@ -2895,6 +2958,7 @@
           isDark, toggleTheme,
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
+          searchModeOverride, isSearchTemplateMode, toggleSearchMode,
           prefixFilter, suffixFilter, hasVowel, excludeRare, modeOptions,
           onlyStarred, toggleOnlyStarred, filterLengths, filterLetter, filterDigit, filterHyphen,
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,

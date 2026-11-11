@@ -521,6 +521,140 @@ def is_pronounceable(s):
             v_count = 0
     return 1 if any(ch in VOWELS_SET for ch in name) else 0
 
+REGEXP_CACHE = {}
+
+def sqlite_regexp(pattern, text):
+    if not text or not pattern:
+        return 0
+    try:
+        compiled = REGEXP_CACHE.get(pattern)
+        if compiled is None:
+            if len(REGEXP_CACHE) > 500:
+                REGEXP_CACHE.clear()
+            compiled = re.compile(pattern, re.IGNORECASE)
+            REGEXP_CACHE[pattern] = compiled
+        return 1 if compiled.search(text) else 0
+    except Exception:
+        return 0
+
+def is_template_pattern(s):
+    """
+    判断用户输入是否应作为定向模板/掩码解析:
+    1. 包裹双引号如 "cold" -> 明确指定为字面量，非模板
+    2. 包含结构符号: [], {}, (), |, *, ? -> 100% 模板
+    3. 包含大写占位符: L, D, V, C -> 模板 (大写 DDDDDD, LL888, DDDvip)
+    4. 纯小写且不含结构符 (如 vip, 888, cold) -> 普通字面量搜索
+    """
+    if not s:
+        return False
+    s_trimmed = s.strip()
+    if (s_trimmed.startswith('"') and s_trimmed.endswith('"')) or (s_trimmed.startswith("'") and s_trimmed.endswith("'")):
+        return False
+    # 结构字符
+    if any(ch in s_trimmed for ch in ['[', ']', '{', '}', '(', ')', '|', '*', '?']):
+        return True
+    # 大写占位符
+    if any(ch in s_trimmed for ch in ['L', 'D', 'V', 'C']):
+        return True
+    return False
+
+def compile_template_for_search(pattern_str):
+    """
+    将用户定向模板表达式编译为供 SQLite 毫秒级搜索的数据结构:
+    - regex: 精确校验正则
+    - candidate_modes: 可直接下推 B-Tree 索引的候选 mode 列表 (如 ['6num'])
+    - fts_literals: 可下推 FTS5 全文索引的固定字面量子串 (如 ['888'])
+    """
+    s = pattern_str.strip()
+    suffix_target = ""
+    if "." in s:
+        parts = s.rsplit(".", 1)
+        s = parts[0]
+        suffix_target = parts[1].lower() if parts[1] else "com"
+
+    slots, total_all = parse_template(s)
+    
+    min_len = 0
+    max_len = 0
+    has_letters = False
+    has_digits = False
+    has_hyphen = False
+    only_letters = True
+    only_digits = True
+
+    regex_parts = []
+    fts_literals = []
+
+    for slot in slots:
+        opt_lens = [len(opt) for opt in slot]
+        min_len += min(opt_lens)
+        max_len += max(opt_lens)
+        
+        all_chars = set("".join(slot))
+        if any(ch in LETTERS_SET for ch in all_chars):
+            has_letters = True
+        if any(ch in DIGITS_SET for ch in all_chars):
+            has_digits = True
+        if '-' in all_chars:
+            has_hyphen = True
+        if not all_chars.issubset(LETTERS_SET):
+            only_letters = False
+        if not all_chars.issubset(DIGITS_SET):
+            only_digits = False
+            
+        if len(slot) == 1 and len(slot[0]) >= 2:
+            fts_literals.append(slot[0].lower())
+            
+        if len(slot) == 1:
+            val = slot[0]
+            regex_parts.append(re.escape(val))
+        else:
+            s_set = set(slot)
+            if s_set == LETTERS_SET:
+                regex_parts.append("[a-z]")
+            elif s_set == DIGITS_SET:
+                regex_parts.append("[0-9]")
+            elif s_set == VOWELS_SET:
+                regex_parts.append("[aeiou]")
+            elif s_set == CONSONANTS_SET:
+                regex_parts.append("[bcdfghjklmnpqrstvwxyz]")
+            elif s_set == ALPHANUM_SET:
+                regex_parts.append("[a-z0-9]")
+            elif all(len(x) == 1 for x in slot):
+                regex_parts.append("[" + re.escape("".join(sorted(slot))) + "]")
+            else:
+                regex_parts.append("(?:" + "|".join(re.escape(x) for x in slot) + ")")
+
+    regex_body = "".join(regex_parts)
+    if suffix_target:
+        regex_full = f"^{regex_body}\\.{re.escape(suffix_target)}$"
+    else:
+        regex_full = f"^{regex_body}\\.[a-z0-9\\-]+$"
+
+    candidate_modes = []
+    if min_len == max_len and min_len in (3, 4, 5, 6):
+        l = min_len
+        suffix_hyphen = "-" if has_hyphen else ""
+        if only_digits:
+            candidate_modes.append(f"{l}num{suffix_hyphen}")
+        elif only_letters:
+            candidate_modes.append(f"{l}letter{suffix_hyphen}")
+        else:
+            candidate_modes.append(f"{l}mix{suffix_hyphen}")
+            if not only_digits and not only_letters and has_digits and has_letters:
+                pass
+            else:
+                candidate_modes.extend([f"{l}letter{suffix_hyphen}", f"{l}num{suffix_hyphen}"])
+
+    return {
+        "regex": regex_full,
+        "candidate_modes": candidate_modes,
+        "fts_literals": fts_literals,
+        "min_len": min_len,
+        "max_len": max_len,
+        "total": total_all
+    }
+
 def get_db():
     conn = sqlite3.connect(DB_PATH, timeout=15)
     conn.row_factory = sqlite3.Row
@@ -534,6 +668,7 @@ def get_db():
     conn.create_function("has_sequential", 3, has_sequential)
     conn.create_function("match_pattern", 2, match_pattern)
     conn.create_function("is_pronounceable", 1, is_pronounceable)
+    conn.create_function("REGEXP", 2, sqlite_regexp)
     return conn
 
 def init_db_and_token():
@@ -1418,7 +1553,8 @@ def start_batch_recheck(mode="all"):
 def build_domain_filters(params):
     mode = params.get("mode", [""])[0]
     status = params.get("status", ["available"])[0]
-    search = params.get("q", [""])[0].strip().lower()
+    raw_search = params.get("q", [""])[0].strip()
+    search_mode = params.get("search_mode", ["auto"])[0].strip().lower()
     has_vowel = params.get("has_vowel", ["0"])[0] == "1"
     exclude_rare = params.get("exclude_rare", ["0"])[0] == "1"
     prefix = params.get("prefix", [""])[0].strip().lower()
@@ -1484,11 +1620,46 @@ def build_domain_filters(params):
         where_clauses.append("mode = ?")
         bind_params.append(mode)
 
-    # 4. 关键字及前后缀
-    if search:
-        # FTS5 Trigram 全文检索极速通道：彻底消除百万级全表扫描，将模糊包含检索从数秒提速至毫秒级
-        where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
-        bind_params.append(f"%{search}%")
+    # 4. 关键字 (普通全文检索 / 智能定向模板掩码匹配) 及前后缀
+    if raw_search:
+        is_quoted = (raw_search.startswith('"') and raw_search.endswith('"')) or (raw_search.startswith("'") and raw_search.endswith("'"))
+        if is_quoted:
+            search_str = raw_search[1:-1].strip().lower()
+            use_template = False
+        elif search_mode == "template":
+            search_str = raw_search
+            use_template = True
+        elif search_mode == "literal":
+            search_str = raw_search.lower()
+            use_template = False
+        else: # auto
+            use_template = is_template_pattern(raw_search)
+            search_str = raw_search
+
+        if use_template:
+            try:
+                t_info = compile_template_for_search(search_str)
+                # 1. 模式候选下推 (若用户未手动强选长度/字符类型)
+                if t_info["candidate_modes"] and not selected_lengths and all_or_none:
+                    placeholders = ",".join("?" for _ in t_info["candidate_modes"])
+                    where_clauses.append(f"mode IN ({placeholders})")
+                    bind_params.extend(t_info["candidate_modes"])
+                # 2. FTS5 字面量极速预过滤 (若提取到固定字面量子串如 888, vip)
+                if t_info["fts_literals"]:
+                    for lit in t_info["fts_literals"]:
+                        where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
+                        bind_params.append(f"%{lit}%")
+                # 3. 正则表达式精准命中
+                where_clauses.append("domain REGEXP ?")
+                bind_params.append(t_info["regex"])
+            except Exception:
+                # 语法异常时降级为普通包含模糊检索
+                where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
+                bind_params.append(f"%{search_str.lower()}%")
+        else:
+            if search_str:
+                where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
+                bind_params.append(f"%{search_str}%")
 
     if prefix:
         where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
