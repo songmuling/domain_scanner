@@ -935,100 +935,70 @@
         </div>
       </div>
 
-      <!-- 域名列表展示 -->
-      <div class="overflow-x-auto rounded-xl border border-slate-800">
-        <table class="w-full text-left border-collapse">
-          <thead>
-            <tr
-              class="bg-slate-950/80 text-[11px] font-semibold text-slate-400 uppercase tracking-wider border-b border-slate-800">
-              <th class="py-3 px-4">域名 (点击一键复制)</th>
-              <th class="py-3 px-3">模式</th>
-              <th class="py-3 px-3">发现节点</th>
-              <th class="py-3 px-3">发现时间</th>
-              <th class="py-3 px-4 text-center">一键直达购买</th>
-              <th class="py-3 px-4 text-right">操作管理</th>
-            </tr>
-          </thead>
-          <tbody class="divide-y divide-slate-800/60 text-xs">
-            <tr v-for="item in domainList" :key="item.domain" class="hover:bg-slate-800/30 transition group">
-              <td class="py-3 px-4">
-                <div class="flex items-center gap-2">
-                  <span @click="copyText(item.domain)" title="点击复制"
-                    class="font-mono font-bold text-sm text-indigo-300 hover:text-white cursor-pointer transition flex items-center gap-1">
-                    {{ item.domain }}
-                    <span class="opacity-0 group-hover:opacity-100 text-[10px] text-slate-400">📋</span>
-                  </span>
-                  <span v-if="item.is_starred" class="text-amber-400 text-xs" title="已收藏">⭐</span>
-                  <span v-if="item.status === 'registered'"
-                    class="text-rose-400 text-xs font-semibold px-1.5 py-0.5 rounded bg-rose-950/60 border border-rose-800/40" :title="item.reason || '已被抢注'">已失效</span>
-                </div>
-              </td>
+      <!-- 域名列表展示区 (紧凑自适应多列网格) -->
+      <div class="space-y-2.5">
+        <!-- 列表头部工具栏：统计与一键复制当前页 -->
+        <div class="flex items-center justify-between text-xs text-slate-400 px-1">
+          <div class="flex items-center gap-2">
+            <span>共 <b class="text-white">{{ totalDomains.toLocaleString() }}</b> 个可用资产</span>
+            <span class="text-slate-600">·</span>
+            <span>第 <b class="text-slate-200">{{ page }}</b> / {{ totalPages }} 页</span>
+          </div>
+          <button @click="copyAllCurrentPageDomains" :disabled="domainList.length === 0"
+            class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 hover:text-white rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer text-xs font-medium shadow-sm"
+            :title="'复制本页全部 ' + domainList.length + ' 个域名到剪贴板 (每行一个)'">
+            <span>📋</span>
+            <span>复制本页域名 ({{ domainList.length }})</span>
+          </button>
+        </div>
 
-              <td class="py-3 px-3">
-                <span
-                  class="px-2 py-0.5 rounded bg-slate-800 border border-slate-700/60 text-[10px] font-mono text-slate-300">
-                  {{ item.mode || '未知' }}
-                </span>
-              </td>
+        <!-- 紧凑域名卡片网格 (移动端2列，平板3列，桌面4列，超宽屏5列) -->
+        <div v-if="domainList.length > 0"
+          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-2">
+          <div v-for="item in domainList" :key="item.domain"
+            class="group relative flex items-center justify-between px-3 py-2 bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-indigo-500/50 rounded-xl transition shadow-sm">
+            <!-- 左侧：域名及失效标识 (点击快速复制) -->
+            <div class="flex items-center gap-1.5 min-w-0 pr-1">
+              <span @click="copyText(item.domain)" title="点击复制域名"
+                class="font-mono font-bold text-xs sm:text-sm text-indigo-300 group-hover:text-white cursor-pointer transition truncate tracking-tight select-none">
+                {{ item.domain }}
+              </span>
+              <span v-if="item.status === 'registered'"
+                class="text-[10px] text-rose-400 font-semibold px-1 rounded bg-rose-950/70 border border-rose-800/50 shrink-0"
+                :title="item.reason || '已被抢注'">已失效</span>
+            </div>
 
-              <td class="py-3 px-3 text-slate-400 font-mono text-[11px]">
-                {{ item.node_id || 'manual' }}
-              </td>
+            <!-- 右侧：复检与收藏操作 -->
+            <div class="flex items-center gap-1 shrink-0">
+              <button @click="recheckDomain(item)" :disabled="item.rechecking" title="在线权威复检 RDAP"
+                class="p-1 text-slate-500 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
+                <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
+              </button>
+              <button @click="toggleStar(item)" :title="item.is_starred ? '取消收藏' : '加入星标收藏'"
+                class="p-1 text-slate-500 hover:text-amber-400 rounded hover:bg-slate-800 transition text-xs"
+                :class="item.is_starred ? 'text-amber-400' : ''">
+                {{ item.is_starred ? '⭐' : '☆' }}
+              </button>
+            </div>
+          </div>
+        </div>
 
-              <td class="py-3 px-3 text-slate-400 text-[11px]">
-                {{ formatTime(item.created_at) }}
-              </td>
-
-              <td class="py-3 px-4">
-                <div class="flex items-center justify-center gap-1.5">
-                  <a :href="'https://www.dynadot.com/domain/search.html?domain=' + item.domain" target="_blank"
-                    class="px-2 py-0.5 bg-blue-950/60 hover:bg-blue-900 border border-blue-800/60 text-blue-300 hover:text-white rounded text-[10px] transition">
-                    Dynadot
-                  </a>
-                  <a :href="'https://www.namesilo.com/domain/search-domains?query=' + item.domain" target="_blank"
-                    class="px-2 py-0.5 bg-sky-950/60 hover:bg-sky-900 border border-sky-800/60 text-sky-300 hover:text-white rounded text-[10px] transition">
-                    Namesilo
-                  </a>
-                  <a :href="'https://wanwang.aliyun.com/domain/searchresult/#/?keyword=' + item.domain" target="_blank"
-                    class="px-2 py-0.5 bg-orange-950/60 hover:bg-orange-900 border border-orange-800/60 text-orange-300 hover:text-white rounded text-[10px] transition">
-                    阿里云
-                  </a>
-                </div>
-              </td>
-
-              <td class="py-3 px-4 text-right">
-                <div class="flex items-center justify-end gap-1.5">
-                  <button @click="recheckDomain(item)" :disabled="item.rechecking" title="在线复检 RDAP"
-                    class="p-1 text-slate-400 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
-                    <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
-                  </button>
-                  <button @click="toggleStar(item)"
-                    :title="item.is_starred ? '取消收藏' : '加入收藏'"
-                    class="p-1 text-slate-400 hover:text-amber-400 rounded hover:bg-slate-800 transition text-sm">
-                    {{ item.is_starred ? '⭐' : '☆' }}
-                  </button>
-                </div>
-              </td>
-            </tr>
-
-            <tr v-if="domainList.length === 0">
-              <td colspan="6" class="py-12 text-center text-slate-500">
-                <div class="text-3xl mb-2">🔍</div>
-                <div class="text-sm">暂无符合条件的域名</div>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        <!-- 空状态 -->
+        <div v-else class="py-12 text-center text-slate-500 border border-dashed border-slate-800 rounded-xl">
+          <div class="text-3xl mb-2">🔍</div>
+          <div class="text-sm">暂无符合条件的域名</div>
+        </div>
       </div>
 
-      <!-- 分页 -->
-      <div class="flex items-center justify-between text-xs text-slate-400 pt-2">
-        <div>共 <b class="text-slate-200">{{ totalDomains }}</b> 个域名 · 当前第 {{ page }} / {{ totalPages }} 页</div>
+      <!-- 底部紧凑分页栏 -->
+      <div class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-400 pt-1 border-t border-slate-800/60">
+        <div>共 <b class="text-slate-200">{{ totalDomains.toLocaleString() }}</b> 个域名 · 当前第 {{ page }} / {{ totalPages }} 页</div>
         <div class="flex items-center space-x-1.5">
           <button @click="page--; fetchDomains()" :disabled="page <= 1"
             class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 transition">
             上一页
           </button>
+          <span class="px-2 py-1 text-slate-400 font-mono">{{ page }} / {{ totalPages }}</span>
           <button @click="page++; fetchDomains()" :disabled="page >= totalPages"
             class="px-3 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-300 rounded-lg border border-slate-700 transition">
             下一页
@@ -1062,7 +1032,6 @@
               :class="dispatchForm.mode_type === 'template' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
               class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer">
               <span>🎯</span> 定向模板选号
-              <span class="text-[10px] bg-emerald-500/30 text-emerald-300 px-1.5 py-0.2 rounded-full border border-emerald-400/30 font-mono">秒级狙击</span>
             </button>
             <button type="button" @click="dispatchForm.mode_type = 'recheck'"
               :class="dispatchForm.mode_type === 'recheck' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
@@ -2516,6 +2485,17 @@
           });
         };
 
+        const copyAllCurrentPageDomains = () => {
+          if (!domainList.value || domainList.value.length === 0) {
+            showToast('当前页暂无域名可复制');
+            return;
+          }
+          const text = domainList.value.map(d => d.domain).join('\n');
+          navigator.clipboard.writeText(text).then(() => {
+            showToast(`已复制当前页全部 ${domainList.value.length} 个域名到剪贴板！`);
+          });
+        };
+
         const copyDockerRunCmd = () => {
           copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -v $(pwd):/app -w /app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" python:3.12-alpine python agent.py`);
         };
@@ -3095,7 +3075,7 @@
           openTokenModal,
           batchRecheckScope, batchRecheckState, selectedRecheckCount,
           startRecheckDispatch, startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
-          copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
+          copyText, copyAllCurrentPageDomains, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           refreshAll,
           showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef,
           openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarInspected, syncDomainToRegistered
