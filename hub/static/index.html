@@ -681,20 +681,31 @@
         </div>
       </div>
 
-      <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl">
-        <div class="text-xs font-medium text-slate-400">模式资产分布 (点击直达筛选)</div>
-        <div class="text-xs text-slate-300 mt-2 flex flex-wrap gap-1.5">
-          <button v-for="(cnt, m) in stats?.mode_stats" :key="m" @click="selectModeFromStats(m)"
-            class="px-1.5 py-0.5 bg-slate-800 hover:bg-indigo-900/60 hover:border-indigo-500 rounded border border-slate-700 text-[10px] transition cursor-pointer"
-            :title="'快速筛选 ' + m">
-            {{ m }}: <b class="text-white">{{ cnt }}</b>
-          </button>
+      <!-- Agent 节点集群概览 (点击平滑定位至下方节点雷达区) -->
+      <div class="bg-slate-900/80 border border-slate-800/80 p-4 rounded-xl cursor-pointer hover:border-emerald-500/50 transition group"
+        @click="scrollToAgentNodes" title="点击定位至下方 Agent 节点雷达区">
+        <div class="flex items-center justify-between">
+          <div class="text-xs font-medium text-slate-400 group-hover:text-emerald-400 transition flex items-center gap-1.5">
+            <span>🖥️</span> Agent 节点集群
+          </div>
+          <span class="text-[10px] px-1.5 py-0.5 rounded font-mono font-medium"
+            :class="offlineNodes.length === 0 && onlineNodes.length > 0 ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/50' : (onlineNodes.length === 0 ? 'bg-slate-800 text-slate-400 border border-slate-700' : 'bg-rose-950/80 text-rose-400 border border-rose-800/50')">
+            {{ offlineNodes.length === 0 && onlineNodes.length > 0 ? '● 健康全绿' : (onlineNodes.length === 0 ? '○ 无在线节点' : `● ${offlineNodes.length}台离线`) }}
+          </span>
+        </div>
+        <div class="text-2xl font-black mt-1"
+          :class="offlineNodes.length === 0 && onlineNodes.length > 0 ? 'text-emerald-400' : (onlineNodes.length === 0 ? 'text-slate-400' : 'text-amber-400')">
+          {{ onlineNodes.length }} <span class="text-xs text-slate-400 font-normal">/ {{ nodes.length }} 在线</span>
+        </div>
+        <div class="text-[11px] text-slate-400 mt-1 flex items-center justify-between">
+          <span>⚡ {{ runningNodesCount }} 台扫描中 · {{ idleNodesCount }} 待命</span>
+          <span class="text-emerald-400/80 group-hover:text-emerald-300 group-hover:translate-x-0.5 transition text-[11px]">查看雷达 →</span>
         </div>
       </div>
     </div>
 
     <!-- 节点实时雷达监控区 (Agent Nodes) -->
-    <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
+    <section id="agent-nodes-section" class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 sm:p-5">
       <div class="flex items-center justify-between mb-3.5">
         <div class="flex items-center gap-2">
           <span class="text-base">🖥️</span>
@@ -834,6 +845,33 @@
           </button>
 
         </div>
+      </div>
+
+      <!-- 模式分类直达药丸栏 (从顶部KPI卡下移整合) -->
+      <div v-if="modeStatsList.length > 0" class="flex flex-wrap items-center gap-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-xs">
+        <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1 shrink-0 select-none mr-1">
+          <span>📦</span> 分类直达:
+        </span>
+        <!-- 全部资产按钮 -->
+        <button @click="clearModeFilter"
+          class="px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer border flex items-center gap-1 shrink-0"
+          :class="!activeModeFilter ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-white'">
+          <span>全部资产</span>
+          <span class="text-[10px] opacity-80 font-mono">({{ formatCompactNumber(stats?.total_domains || 0) }})</span>
+        </button>
+
+        <!-- 各模式分类药丸 (按资产规模降序排列) -->
+        <button v-for="item in modeStatsList" :key="item.mode"
+          @click="selectModeFromStats(item.mode)"
+          class="px-2 py-1 rounded-lg text-xs font-mono transition cursor-pointer border flex items-center gap-1.5 shrink-0"
+          :class="activeModeFilter === item.mode ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 hover:border-slate-700 text-slate-300 border-slate-800'"
+          :title="'筛选模式: ' + item.mode + ' (' + item.count.toLocaleString() + ' 条资产)'">
+          <span>{{ item.mode }}</span>
+          <span class="text-[10px] px-1.5 py-0.2 rounded font-mono"
+            :class="activeModeFilter === item.mode ? 'bg-indigo-700/80 text-white' : 'bg-slate-800 text-slate-400'">
+            {{ formatCompactNumber(item.count) }}
+          </span>
+        </button>
       </div>
 
       <!-- 第 2 排：位数多选(3 4 5 6)、字符多选(字母 数字 连字符)、靓号雷达下拉与淘金药丸 -->
@@ -2024,8 +2062,41 @@
           fetchDomains();
         };
 
+        const activeModeFilter = computed(() => {
+          if (currentMode.value && currentMode.value !== 'all') {
+            return currentMode.value;
+          }
+          if (filterLengths.value.length === 1) {
+            const len = filterLengths.value[0];
+            let type = '';
+            if (filterLetter.value && filterDigit.value) type = 'mix';
+            else if (filterLetter.value && !filterDigit.value) type = 'letter';
+            else if (!filterLetter.value && filterDigit.value) type = 'num';
+
+            if (type) {
+              const hyp = filterHyphen.value ? '-' : '';
+              return `${len}${type}${hyp}`;
+            }
+          }
+          return '';
+        });
+
+        const clearModeFilter = () => {
+          filterLengths.value = [];
+          filterLetter.value = false;
+          filterDigit.value = false;
+          filterHyphen.value = false;
+          currentMode.value = '';
+          page.value = 1;
+          fetchDomains();
+        };
+
         const selectModeFromStats = (m) => {
           if (!m) return;
+          if (activeModeFilter.value === m) {
+            clearModeFilter();
+            return;
+          }
           onlyStarred.value = false;
           const match = m.match(/^(\d+)(letter|mix|num)(-?)$/);
           if (match) {
@@ -2045,6 +2116,25 @@
           page.value = 1;
           fetchDomains();
         };
+
+        const formatCompactNumber = (num) => {
+          const n = Number(num) || 0;
+          if (n >= 100000000) {
+            return (n / 100000000).toFixed(1).replace(/\.0$/, '') + '亿';
+          }
+          if (n >= 10000) {
+            return (n / 10000).toFixed(1).replace(/\.0$/, '') + '万';
+          }
+          return n.toLocaleString();
+        };
+
+        const modeStatsList = computed(() => {
+          const ms = stats.value?.mode_stats;
+          if (!ms || typeof ms !== 'object') return [];
+          return Object.entries(ms)
+            .map(([mode, count]) => ({ mode, count: Number(count) || 0 }))
+            .sort((a, b) => b.count - a.count);
+        });
 
         const searchKeyword = ref('');
         const searchModeOverride = ref('auto'); // 'auto' | 'template' | 'literal'
@@ -2326,6 +2416,15 @@
 
         const onlineNodes = computed(() => nodes.value.filter(n => n.status !== 'offline'));
         const offlineNodes = computed(() => nodes.value.filter(n => n.status === 'offline'));
+        const runningNodesCount = computed(() => nodes.value.filter(n => n.status === 'running').length);
+        const idleNodesCount = computed(() => Math.max(0, onlineNodes.value.length - runningNodesCount.value));
+
+        const scrollToAgentNodes = () => {
+          const el = document.getElementById('agent-nodes-section');
+          if (el) {
+            el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        };
 
         const activeTaskList = computed(() => {
           if (stats.value && Array.isArray(stats.value.active_tasks) && stats.value.active_tasks.length > 0) {
@@ -2969,9 +3068,11 @@
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,
           filterPattern, patternOptions, patternFamilyOptions, isPronounceable,
           hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
+          activeModeFilter, clearModeFilter, formatCompactNumber, modeStatsList,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList,
           selectAllFilterRules, resetFilterRules,
-          onlineNodes, offlineNodes, toggleSelectAllOnlineNodes, cleanOfflineNodes,
+          onlineNodes, offlineNodes, runningNodesCount, idleNodesCount, scrollToAgentNodes,
+          toggleSelectAllOnlineNodes, cleanOfflineNodes,
           canDispatch, estimatedTotal, derivedModeName, previewExamples, perNodeCount,
           showTemplateHelp, quickTemplates, templateMeta,
           activeAgentTab, isEditingToken, newTokenInput,
