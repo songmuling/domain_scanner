@@ -952,9 +952,9 @@
           </button>
         </div>
 
-        <!-- 紧凑域名卡片网格 (移动端2列，平板3列，桌面4列，超宽屏5列) -->
+        <!-- 紧凑域名卡片网格 (移动端2列，平板3~4列，桌面端统一5列整齐排布) -->
         <div v-if="domainList.length > 0"
-          class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 gap-2">
+          class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
           <div v-for="item in domainList" :key="item.domain"
             class="group relative flex items-center justify-between px-3 py-2 bg-slate-950/70 hover:bg-slate-800/80 border border-slate-800/80 hover:border-indigo-500/50 rounded-xl transition shadow-sm">
             <!-- 左侧：域名及失效标识 (点击快速复制) -->
