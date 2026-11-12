@@ -2950,6 +2950,53 @@ class HubHandler(BaseHTTPRequestHandler):
             domain_com = f"{prefix}.com"
             domain_net = f"{prefix}.net"
 
+            # ⚡ ICANN 全球法定保留字极速短路：微秒级本地直接拦截返回，0 等待秒回！
+            if prefix in ICANN_RESERVED_PREFIXES:
+                reserved_reason = "ICANN 官方全局法定保留 (禁止公众注册)"
+                reserved_rdap = {
+                    "registrar": "ICANN / IGO / Red Cross 国际条约官方保留",
+                    "created_at": "永久法定保留",
+                    "expires_at": "永久法定保留",
+                    "updated_at": "",
+                    "nameservers": [],
+                    "statuses": ["icann reserved", "prohibited registration"],
+                    "resolved_ips": []
+                }
+                com_data = {
+                    "domain": domain_com,
+                    "available": False,
+                    "reason": reserved_reason,
+                    "error": None,
+                    "rdap": reserved_rdap,
+                    "local": None,
+                    "is_starred": False
+                }
+                net_data = {
+                    "domain": domain_net,
+                    "available": False,
+                    "reason": reserved_reason,
+                    "error": None,
+                    "rdap": reserved_rdap,
+                    "local": None,
+                    "is_starred": False
+                }
+                self.send_json({
+                    "code": 0,
+                    "data": {
+                        "prefix": prefix,
+                        "com": com_data,
+                        "net": net_data,
+                        "domain": domain_com,
+                        "available": False,
+                        "reason": reserved_reason,
+                        "error": None,
+                        "rdap": reserved_rdap,
+                        "local": None,
+                        "is_starred": False
+                    }
+                })
+                return
+
             # 1. 批量查询本地数据库收录情况
             com_local = None
             net_local = None

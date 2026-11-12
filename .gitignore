@@ -8,7 +8,8 @@ __pycache__/
 *.db-wal
 *.db-shm
 **/data/*.db*
-hub/data/
+hub/data/*
+!hub/data/icann_reserved.json
 domain_hub/data/
 data/
 

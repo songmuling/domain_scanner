@@ -24,7 +24,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1112.1833"
+AGENT_VERSION = "26.1112.1952"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -276,6 +276,14 @@ class ScanWorker:
                                 scanner.save_checkpoint(ckpt_file, last_dom, self.checked_count, self.found_count)
                                 last_ckpt_save = now
                             continue
+
+                    # 🚫 ICANN 全球法定保留字前置拦截：微秒级本地直接跳过，绝不发起网络请求亦不占用线程池槽位！
+                    dom_prefix = domain.split(".")[0].lower()
+                    if dom_prefix in scanner.ICANN_RESERVED_PREFIXES:
+                        self.checked_count += 1
+                        submitted_count += 1
+                        last_dom = domain
+                        continue
 
                     fut = executor.submit(scanner.check_single_domain, domain)
                     in_flight.add(fut)
