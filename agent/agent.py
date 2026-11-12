@@ -24,7 +24,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1112.1658"
+AGENT_VERSION = "26.1112.1833"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -1718,8 +1718,8 @@
                     <span>👑</span> {{ inspectResult.com.domain }}
                   </span>
                   <span class="text-[10px] px-2 py-0.5 rounded font-mono"
-                    :class="inspectResult.com.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'">
-                    {{ inspectResult.com.available ? '✅ 可立即注册' : '🔒 已被占用' }}
+                    :class="inspectResult.com.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : (inspectResult.com.reason?.includes('ICANN') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400')">
+                    {{ inspectResult.com.available ? '✅ 可立即注册' : (inspectResult.com.reason?.includes('ICANN') ? '⚠️ ICANN 法定保留' : '🔒 已被占用') }}
                   </span>
                 </div>
 
@@ -1763,14 +1763,18 @@
                 <div v-else-if="inspectResult.com.available === false"
                   class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-2.5">
                   <div class="flex items-center justify-between">
-                    <span class="text-rose-400 font-medium text-xs flex items-center gap-1">
-                      <span>🚫</span> 已被注册占用
+                    <span :class="inspectResult.com.reason?.includes('ICANN') ? 'text-amber-400' : 'text-rose-400'" class="font-medium text-xs flex items-center gap-1">
+                      <span>{{ inspectResult.com.reason?.includes('ICANN') ? '⚠️' : '🚫' }}</span>
+                      <span>{{ inspectResult.com.reason?.includes('ICANN') ? 'ICANN 官方全局法定保留' : '已被注册占用' }}</span>
                     </span>
                     <button v-if="inspectResult.com.local && inspectResult.com.local.status === 'available'"
                       @click="syncRegisteredTarget(inspectResult.com)"
                       class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] transition">
                       同步已注册
                     </button>
+                  </div>
+                  <div v-if="inspectResult.com.reason?.includes('ICANN')" class="text-[11px] text-amber-300/90 bg-amber-950/30 p-2.5 rounded-lg border border-amber-800/40 leading-relaxed">
+                    此前缀对应受国际条约或 ICANN Specification 5 保护的国际机构/红十字运动组织法定保留字，虽在根注册局处于未分配状态，但禁止公众商业注册。
                   </div>
                   <!-- RDAP 注册网格 -->
                   <div v-if="inspectResult.com.rdap" class="grid grid-cols-2 gap-2 text-[10px] bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
@@ -1808,8 +1812,8 @@
                     <span>🌐</span> {{ inspectResult.net.domain }}
                   </span>
                   <span class="text-[10px] px-2 py-0.5 rounded font-mono"
-                    :class="inspectResult.net.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'">
-                    {{ inspectResult.net.available ? '✅ 可立即注册' : '🔒 已被占用' }}
+                    :class="inspectResult.net.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : (inspectResult.net.reason?.includes('ICANN') ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40' : 'bg-slate-800 text-slate-400')">
+                    {{ inspectResult.net.available ? '✅ 可立即注册' : (inspectResult.net.reason?.includes('ICANN') ? '⚠️ ICANN 法定保留' : '🔒 已被占用') }}
                   </span>
                 </div>
 
@@ -1853,14 +1857,18 @@
                 <div v-else-if="inspectResult.net.available === false"
                   class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-2.5">
                   <div class="flex items-center justify-between">
-                    <span class="text-rose-400 font-medium text-xs flex items-center gap-1">
-                      <span>🚫</span> 已被注册占用
+                    <span :class="inspectResult.net.reason?.includes('ICANN') ? 'text-amber-400' : 'text-rose-400'" class="font-medium text-xs flex items-center gap-1">
+                      <span>{{ inspectResult.net.reason?.includes('ICANN') ? '⚠️' : '🚫' }}</span>
+                      <span>{{ inspectResult.net.reason?.includes('ICANN') ? 'ICANN 官方全局法定保留' : '已被注册占用' }}</span>
                     </span>
                     <button v-if="inspectResult.net.local && inspectResult.net.local.status === 'available'"
                       @click="syncRegisteredTarget(inspectResult.net)"
                       class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] transition">
                       同步已注册
                     </button>
+                  </div>
+                  <div v-if="inspectResult.net.reason?.includes('ICANN')" class="text-[11px] text-amber-300/90 bg-amber-950/30 p-2.5 rounded-lg border border-amber-800/40 leading-relaxed">
+                    此前缀对应受国际条约或 ICANN Specification 5 保护的国际机构/红十字运动组织法定保留字，虽在根注册局处于未分配状态，但禁止公众商业注册。
                   </div>
                   <!-- RDAP 注册网格 -->
                   <div v-if="inspectResult.net.rdap" class="grid grid-cols-2 gap-2 text-[10px] bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">

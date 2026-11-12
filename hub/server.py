@@ -42,6 +42,22 @@ ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
+# ICANN / IETF / IGO 官方政策永久法定保留字 (权威全量 ICANN Specification 5 规范库)
+_SERVER_RESERVED_JSON_PATH = os.path.join(DATA_DIR, "icann_reserved.json")
+ICANN_RESERVED_PREFIXES = {
+    "gnso", "iesg", "imso", "example", "nic", "whois", "w3c", "iana", "icann", "internic", "rfc-editor",
+    "wto", "spr", "nato", "unesco", "unicef", "unhcr", "undp", "unep", "opec", "interpol", "iaea", "imf",
+    "bceao", "uemoa", "bstdp", "icglr", "puasp", "aripo", "cern", "asean", "ecb", "eib", "bis", "ioc"
+}
+for _p in [_SERVER_RESERVED_JSON_PATH, os.path.join(BASE_DIR, "icann_reserved.json"), os.path.join(os.path.dirname(BASE_DIR), "agent", "icann_reserved.json")]:
+    if os.path.exists(_p):
+        try:
+            with open(_p, "r", encoding="utf-8") as _f:
+                ICANN_RESERVED_PREFIXES.update(json.load(_f))
+            break
+        except Exception as _e:
+            pass
+
 def calc_domain_total(length, use_letters=True, use_digits=False, use_hyphen=False):
     """O(1) 计算任意规则下的候选域名空间全量 (带连字符时总长严格等于 length 位)"""
     chars = ""
@@ -1252,6 +1268,10 @@ def set_cached_inspect(domain, result, ttl=300):
 
 def check_verisign_rdap(domain):
     """权威复检：查询 Verisign 官方 RDAP (携带 SSL 优化与快速超时，支持 com 与 net 双顶级域)"""
+    prefix = domain.split(".")[0].lower()
+    if prefix in ICANN_RESERVED_PREFIXES:
+        return False, "ICANN 官方全局法定保留 (禁止公众注册)"
+
     tld = "net" if domain.lower().endswith(".net") else "com"
     url = f"https://rdap.verisign.com/{tld}/v1/domain/{domain.lower()}"
     req = urllib.request.Request(
@@ -1285,6 +1305,22 @@ def check_domain_availability(domain):
 def inspect_domain_rdap(domain):
     """单域名权威穿透深度查验 (Verisign RDAP 权威根库，支持 DNS 预检、智能降级与 5 分钟内存缓存)"""
     domain = domain.lower().strip()
+    prefix = domain.split(".")[0].lower()
+    if prefix in ICANN_RESERVED_PREFIXES:
+        return {
+            "available": False,
+            "reason": "ICANN 官方全局法定保留 (禁止公众注册)",
+            "rdap": {
+                "registrar": "ICANN / IGO / Red Cross 国际条约官方保留",
+                "created_at": "永久法定保留",
+                "expires_at": "永久法定保留",
+                "updated_at": "",
+                "nameservers": [],
+                "statuses": ["icann reserved", "prohibited registration"],
+                "resolved_ips": []
+            }
+        }
+
     cached = get_cached_inspect(domain)
     if cached:
         cached["is_cached"] = True
@@ -2556,6 +2592,9 @@ class HubHandler(BaseHTTPRequestHandler):
                             d_reason = item.get("reason", "404 未注册")
 
                         if not d_name:
+                            continue
+                        # 过滤拦截 ICANN 官方法定全球保留字 (禁止公众注册)
+                        if d_name.split(".")[0].lower() in ICANN_RESERVED_PREFIXES:
                             continue
                         # 严格推导并纠正真实标准 mode，杜绝任何上报源 mode 错位 (主体总长度严格包含连字符)
                         d_mode = derive_domain_mode(d_name)

@@ -151,10 +151,21 @@ ssl_context = ssl.create_default_context()
 ssl_context.check_hostname = False
 ssl_context.verify_mode = ssl.CERT_NONE
 
-# ICANN / IETF / IGO 官方政策永久保留字
+# ICANN / IETF / IGO 官方政策永久法定保留字 (权威全量 ICANN Specification 5 规范库)
+_SCANNER_DIR = os.path.dirname(os.path.abspath(__file__))
+_RESERVED_JSON_PATH = os.path.join(_SCANNER_DIR, "icann_reserved.json")
+
 ICANN_RESERVED_PREFIXES = {
-    "gnso", "iesg", "imso", "example", "nic", "whois", "w3c", "iana", "icann", "internic", "rfc-editor"
+    "gnso", "iesg", "imso", "example", "nic", "whois", "w3c", "iana", "icann", "internic", "rfc-editor",
+    "wto", "spr", "nato", "unesco", "unicef", "unhcr", "undp", "unep", "opec", "interpol", "iaea", "imf",
+    "bceao", "uemoa", "bstdp", "icglr", "puasp", "aripo", "cern", "asean", "ecb", "eib", "bis", "ioc"
 }
+if os.path.exists(_RESERVED_JSON_PATH):
+    try:
+        with open(_RESERVED_JSON_PATH, "r", encoding="utf-8") as _f:
+            ICANN_RESERVED_PREFIXES.update(json.load(_f))
+    except Exception as _e:
+        pass
 
 def get_char_pool(use_letters=True, use_digits=False):
     chars = ""
