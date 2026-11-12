@@ -968,11 +968,11 @@
                 :title="item.reason || '已被抢注'">已失效</span>
             </div>
 
-            <!-- 右侧：复检与收藏操作 -->
+            <!-- 右侧：权威即验与收藏操作 -->
             <div class="flex items-center gap-1 shrink-0">
-              <button @click="recheckDomain(item)" :disabled="item.rechecking" title="在线权威复检 RDAP"
+              <button @click="inspectDomainFromList(item.domain)" title="单域名权威深度即验 (弹窗查看注册人/到期日/购买直达)"
                 class="p-1 text-slate-500 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
-                <span :class="{'animate-spin inline-block': item.rechecking}">🔄</span>
+                <span>🔍</span>
               </button>
               <button @click="toggleStar(item)" :title="item.is_starred ? '取消收藏' : '加入星标收藏'"
                 class="p-1 text-slate-500 hover:text-amber-400 rounded hover:bg-slate-800 transition text-xs"
@@ -1240,97 +1240,6 @@
             </div>
           </template>
 
-          <div class="grid grid-cols-2 gap-3">
-            <div>
-              <label class="block text-slate-300 font-medium mb-1">单节点并发线程数:</label>
-              <input v-model.number="dispatchForm.threads" type="number" min="5" max="60"
-                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
-            </div>
-            <div>
-              <label class="block text-slate-300 font-medium mb-1">顶级后缀:</label>
-              <input v-model="dispatchForm.suffix" type="text"
-                class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
-            </div>
-          </div>
-
-          <!-- 4. 扫描起点与断点控制 -->
-          <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2">
-            <label class="block text-slate-400 font-medium">4. 扫描起点与断点策略 (重跑控制):</label>
-            <div class="grid grid-cols-2 gap-2">
-              <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
-                :class="!dispatchForm.reset_checkpoint ? 'border-indigo-600 bg-indigo-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
-                <input type="radio" :value="false" v-model="dispatchForm.reset_checkpoint" class="text-indigo-600 focus:ring-0">
-                <div>
-                  <div class="font-semibold text-xs">延续断点续扫</div>
-                  <div class="text-[10px] text-slate-500">跳过已扫过的域名 (推荐)</div>
-                </div>
-              </label>
-              <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
-                :class="dispatchForm.reset_checkpoint ? 'border-amber-600 bg-amber-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
-                <input type="radio" :value="true" v-model="dispatchForm.reset_checkpoint" class="text-amber-500 focus:ring-0">
-                <div>
-                  <div class="font-semibold text-xs text-amber-300">强制从头重跑</div>
-                  <div class="text-[10px] text-amber-500/80">从第 1 个域名重新全扫</div>
-                </div>
-              </label>
-            </div>
-            <div v-if="dispatchForm.reset_checkpoint" class="reset-risk-box text-[10px] p-2.5 rounded-lg border leading-relaxed">
-              ⚠️ 风险提示：重跑将强制清空节点本地历史断点，从头重新扫描完整字典。数据库已发现的域名仍将保留并更新时间，不会丢失你的星标收藏。
-            </div>
-          </div>
-
-          <!-- 5. 前置精选排查规则 (极速先筛后查：本地内存毫秒级跳过乱码，仅向网络提交精品) -->
-          <div v-if="dispatchForm.mode_type !== 'template'" class="filter-panel-box p-3 rounded-xl border space-y-2.5">
-            <div class="flex items-center justify-between">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="dispatchForm.storage_filter.enabled" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                <span class="font-medium text-slate-200">5. 🎯 开启前置精选规则排查</span>
-                <span v-if="dispatchForm.length >= 5" class="filter-recom-badge text-[10px] px-1.5 py-0.5 rounded border font-semibold">长字典极力推荐</span>
-              </label>
-              <div v-if="dispatchForm.storage_filter.enabled" class="flex gap-2">
-                <button type="button" @click="selectAllFilterRules" class="text-[10px] text-indigo-400 hover:text-indigo-300">全选精品</button>
-                <button type="button" @click="resetFilterRules" class="text-[10px] text-slate-500 hover:text-slate-400">清空</button>
-              </div>
-            </div>
-            <div v-if="dispatchForm.storage_filter.enabled" class="space-y-2 pt-1 border-t border-slate-800/80 text-xs">
-              <div class="filter-tip-box text-[10px] p-2 rounded-lg border leading-relaxed">
-                ⚡ <b>前置先筛后查生效</b>：节点在本地内存纳秒级过筛，<b>仅对命中精选的域名发起网络查询</b>。跳过无用垃圾乱码，杜绝上游限流并节省 98% 流量与磁盘！
-              </div>
-              <div class="grid grid-cols-2 gap-2 text-slate-300">
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.palindrome}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.palindrome" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>🔄 对称回文 <span class="filter-chip-sub text-[10px] font-mono">(abba / 12321)</span></span>
-                </label>
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.seq}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.seq" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>📈 顺子/倒顺 <span class="filter-chip-sub text-[10px] font-mono">(≥4位如1234xx)</span></span>
-                </label>
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.has_patterns}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.has_patterns" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>👥 叠字对子 <span class="filter-chip-sub text-[10px] font-mono">({{ dispatchForm.length === 6 ? 'AAABBB/AABBCC' : (dispatchForm.length === 5 ? 'AAABB/AABBB' : 'AABB/ABAB') }})</span></span>
-                </label>
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.has_repeat}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.has_repeat" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>🐆 连号豹子 <span class="filter-chip-sub text-[10px] font-mono">(首尾3连/4连)</span></span>
-                </label>
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.pronounceable}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.pronounceable" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>🗣️ 易读品牌词 <span class="filter-chip-sub text-[10px] font-mono">(自然发音)</span></span>
-                </label>
-                <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
-                  :class="{'is-active': dispatchForm.storage_filter.clean_only}">
-                  <input type="checkbox" v-model="dispatchForm.storage_filter.clean_only" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
-                  <span>✨ 纯净拼音 <span class="filter-chip-sub text-[10px] font-mono">(避q,x,z,v,y)</span></span>
-                </label>
-              </div>
-            </div>
-          </template>
-
           <!-- C. 存量资产权威复验视图 -->
           <template v-else-if="dispatchForm.mode_type === 'recheck'">
             <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
@@ -1381,6 +1290,100 @@
               </div>
             </div>
           </template>
+
+          <!-- 通用扫描配置 (常规穷举与定向模板通用，存量复验无需此项) -->
+          <div v-if="dispatchForm.mode_type !== 'recheck'" class="space-y-3.5">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-slate-300 font-medium mb-1">单节点并发线程数:</label>
+                <input v-model.number="dispatchForm.threads" type="number" min="5" max="60"
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+              </div>
+              <div>
+                <label class="block text-slate-300 font-medium mb-1">顶级后缀:</label>
+                <input v-model="dispatchForm.suffix" type="text"
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+              </div>
+            </div>
+
+            <!-- 4. 扫描起点与断点控制 -->
+            <div class="bg-slate-950/60 p-3 rounded-xl border border-slate-800/80 space-y-2">
+              <label class="block text-slate-400 font-medium">4. 扫描起点与断点策略 (重跑控制):</label>
+              <div class="grid grid-cols-2 gap-2">
+                <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
+                  :class="!dispatchForm.reset_checkpoint ? 'border-indigo-600 bg-indigo-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
+                  <input type="radio" :value="false" v-model="dispatchForm.reset_checkpoint" class="text-indigo-600 focus:ring-0">
+                  <div>
+                    <div class="font-semibold text-xs">延续断点续扫</div>
+                    <div class="text-[10px] text-slate-500">跳过已扫过的域名 (推荐)</div>
+                  </div>
+                </label>
+                <label class="flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition"
+                  :class="dispatchForm.reset_checkpoint ? 'border-amber-600 bg-amber-950/20 text-white' : 'border-slate-800 text-slate-400 hover:bg-slate-900'">
+                  <input type="radio" :value="true" v-model="dispatchForm.reset_checkpoint" class="text-amber-500 focus:ring-0">
+                  <div>
+                    <div class="font-semibold text-xs text-amber-300">强制从头重跑</div>
+                    <div class="text-[10px] text-amber-500/80">从第 1 个域名重新全扫</div>
+                  </div>
+                </label>
+              </div>
+              <div v-if="dispatchForm.reset_checkpoint" class="reset-risk-box text-[10px] p-2.5 rounded-lg border leading-relaxed">
+                ⚠️ 风险提示：重跑将强制清空节点本地历史断点，从头重新扫描完整字典。数据库已发现的域名仍将保留并更新时间，不会丢失你的星标收藏。
+              </div>
+            </div>
+
+            <!-- 5. 前置精选排查规则 (极速先筛后查：本地内存毫秒级跳过乱码，仅向网络提交精品，仅限常规全量穷举) -->
+            <div v-if="dispatchForm.mode_type === 'standard'" class="filter-panel-box p-3 rounded-xl border space-y-2.5">
+              <div class="flex items-center justify-between">
+                <label class="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" v-model="dispatchForm.storage_filter.enabled" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                  <span class="font-medium text-slate-200">5. 🎯 开启前置精选规则排查</span>
+                  <span v-if="dispatchForm.length >= 5" class="filter-recom-badge text-[10px] px-1.5 py-0.5 rounded border font-semibold">长字典极力推荐</span>
+                </label>
+                <div v-if="dispatchForm.storage_filter.enabled" class="flex gap-2">
+                  <button type="button" @click="selectAllFilterRules" class="text-[10px] text-indigo-400 hover:text-indigo-300">全选精品</button>
+                  <button type="button" @click="resetFilterRules" class="text-[10px] text-slate-500 hover:text-slate-400">清空</button>
+                </div>
+              </div>
+              <div v-if="dispatchForm.storage_filter.enabled" class="space-y-2 pt-1 border-t border-slate-800/80 text-xs">
+                <div class="filter-tip-box text-[10px] p-2 rounded-lg border leading-relaxed">
+                  ⚡ <b>前置先筛后查生效</b>：节点在本地内存纳秒级过筛，<b>仅对命中精选的域名发起网络查询</b>。跳过无用垃圾乱码，杜绝上游限流并节省 98% 流量与磁盘！
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-slate-300">
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.palindrome}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.palindrome" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>🔄 对称回文 <span class="filter-chip-sub text-[10px] font-mono">(abba / 12321)</span></span>
+                  </label>
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.seq}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.seq" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>📈 顺子/倒顺 <span class="filter-chip-sub text-[10px] font-mono">(≥4位如1234xx)</span></span>
+                  </label>
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.has_patterns}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.has_patterns" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>👥 叠字对子 <span class="filter-chip-sub text-[10px] font-mono">({{ dispatchForm.length === 6 ? 'AAABBB/AABBCC' : (dispatchForm.length === 5 ? 'AAABB/AABBB' : 'AABB/ABAB') }})</span></span>
+                  </label>
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.has_repeat}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.has_repeat" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>🐆 连号豹子 <span class="filter-chip-sub text-[10px] font-mono">(首尾3连/4连)</span></span>
+                  </label>
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.pronounceable}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.pronounceable" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>🗣️ 易读品牌词 <span class="filter-chip-sub text-[10px] font-mono">(自然发音)</span></span>
+                  </label>
+                  <label class="filter-chip flex items-center gap-1.5 cursor-pointer p-1.5 rounded-lg border transition"
+                    :class="{'is-active': dispatchForm.storage_filter.clean_only}">
+                    <input type="checkbox" v-model="dispatchForm.storage_filter.clean_only" class="rounded border-slate-700 text-indigo-600 focus:ring-0">
+                    <span>✨ 纯净拼音 <span class="filter-chip-sub text-[10px] font-mono">(避q,x,z,v,y)</span></span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
 
           <!-- 节点勾选列表 (严格区分在线与离线节点) -->
           <div>
@@ -2920,6 +2923,12 @@
           }, 100);
         };
 
+        const inspectDomainFromList = (domain) => {
+          inspectorDomainInput.value = domain;
+          showInspectorModal.value = true;
+          runDomainInspect();
+        };
+
         const closeInspectorModal = () => {
           showInspectorModal.value = false;
         };
@@ -3077,7 +3086,7 @@
           startRecheckDispatch, startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
           copyText, copyAllCurrentPageDomains, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           refreshAll,
-          showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef,
+          showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef, inspectDomainFromList,
           openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarInspected, syncDomainToRegistered
         };
       }
