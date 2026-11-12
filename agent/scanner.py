@@ -452,7 +452,8 @@ def check_rdap_availability(domain):
         except Exception:
             pass
 
-    url = f"https://rdap.verisign.com/com/v1/domain/{domain}"
+    tld = "net" if domain.lower().endswith(".net") else "com"
+    url = f"https://rdap.verisign.com/{tld}/v1/domain/{domain}"
     req = urllib.request.Request(
         url,
         headers={

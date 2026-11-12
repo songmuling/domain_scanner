@@ -24,6 +24,7 @@ import urllib.parse
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone, timedelta
 import threading
+import concurrent.futures
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -1250,8 +1251,9 @@ def set_cached_inspect(domain, result, ttl=300):
         INSPECT_CACHE[domain] = (result, now + ttl)
 
 def check_verisign_rdap(domain):
-    """权威复检：查询 Verisign 官方 RDAP (携带 SSL 优化与快速超时)"""
-    url = f"https://rdap.verisign.com/com/v1/domain/{domain.lower()}"
+    """权威复检：查询 Verisign 官方 RDAP (携带 SSL 优化与快速超时，支持 com 与 net 双顶级域)"""
+    tld = "net" if domain.lower().endswith(".net") else "com"
+    url = f"https://rdap.verisign.com/{tld}/v1/domain/{domain.lower()}"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DomainHub-Verifier/1.0", "Accept": "application/rdap+json"}
@@ -1291,8 +1293,9 @@ def inspect_domain_rdap(domain):
     # 1. 毫秒级 DNS 解析预检
     dns_active, dns_ips = dns_resolve_info(domain)
 
-    # 2. 尝试向 Verisign 权威 RDAP 发起穿透查验
-    url = f"https://rdap.verisign.com/com/v1/domain/{domain}"
+    # 2. 尝试向 Verisign 权威 RDAP 发起穿透查验 (自动适配 com / net 根库)
+    tld = "net" if domain.lower().endswith(".net") else "com"
+    url = f"https://rdap.verisign.com/{tld}/v1/domain/{domain}"
     req = urllib.request.Request(
         url,
         headers={"User-Agent": "DomainHub-Inspector/2.0", "Accept": "application/rdap+json"}
@@ -1700,7 +1703,12 @@ def build_domain_filters(params):
 
     if suffix:
         where_clauses.append("domains.rowid IN (SELECT rowid FROM domains_fts WHERE domain LIKE ?)")
-        bind_params.append(f"%{suffix}.com")
+        bind_params.append(f"%{suffix}.%")
+
+    tld = params.get("tld", [""])[0].strip().lower()
+    if tld in ("com", "net"):
+        where_clauses.append("domains.domain LIKE ?")
+        bind_params.append(f"%.{tld}")
 
     # 5. 淘金规则：包含元音 / 剔除生僻声母 (利用预计算索引快速过滤)
     if has_vowel:
@@ -2601,6 +2609,8 @@ class HubHandler(BaseHTTPRequestHandler):
             use_hyphen = bool(data.get("use_hyphen", False))
             reset_checkpoint = bool(data.get("reset_checkpoint", False))
             suffix = data.get("suffix", "com").strip().lower()
+            if suffix not in ("com", "net"):
+                suffix = "com"
             threads = int(data.get("threads", 25))
             selected_nodes = data.get("nodes", [])
 
@@ -2875,7 +2885,7 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({"code": 0, "msg": "批量复验任务已请求停止"})
             return
 
-        # 7. 单域名权威深度即验 API (形态 A)
+        # 7. 单域名权威深度即验 API (Verisign RDAP .com + .net 并行权威双验)
         if path == "/api/domain/inspect":
             data = self.read_json_body()
             raw_d = data.get("domain", "").strip().lower()
@@ -2888,35 +2898,76 @@ class HubHandler(BaseHTTPRequestHandler):
                 self.send_json({"code": 1, "msg": "请输入待查域名或字符前缀"}, 400)
                 return
 
-            if "." not in raw_d:
-                target_domain = f"{raw_d}.com"
+            # 若用户输入了带后缀的域名 (如 tesla.xyz, google.com, test.net)，忽视掉后缀只提取前缀
+            if "." in raw_d:
+                prefix = raw_d.split(".")[0].strip()
             else:
-                target_domain = raw_d
+                prefix = raw_d
 
-            # 1. 查询本地数据库收录情况
-            local_record = None
+            if not prefix:
+                self.send_json({"code": 1, "msg": "待查前缀不能为空"}, 400)
+                return
+
+            domain_com = f"{prefix}.com"
+            domain_net = f"{prefix}.net"
+
+            # 1. 批量查询本地数据库收录情况
+            com_local = None
+            net_local = None
             with get_db() as conn:
                 cur = conn.cursor()
                 cur.execute("""
                 SELECT domain, mode, node_id, status, is_starred, reason, datetime(created_at, '+8 hours') as created_at
-                FROM domains WHERE domain = ?;
-                """, (target_domain,))
-                row = cur.fetchone()
-                if row:
-                    local_record = dict(row)
+                FROM domains WHERE domain IN (?, ?);
+                """, (domain_com, domain_net))
+                for row in cur.fetchall():
+                    d_row = dict(row)
+                    if d_row["domain"] == domain_com:
+                        com_local = d_row
+                    elif d_row["domain"] == domain_net:
+                        net_local = d_row
 
-            # 2. 实时穿透 Verisign RDAP 权威根库
-            inspect_res = inspect_domain_rdap(target_domain)
+            # 2. 并行穿透 Verisign RDAP 权威根库 (.com 与 .net 双线程并发查验)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                fut_com = executor.submit(inspect_domain_rdap, domain_com)
+                fut_net = executor.submit(inspect_domain_rdap, domain_net)
+                res_com = fut_com.result()
+                res_net = fut_net.result()
+
+            com_data = {
+                "domain": domain_com,
+                "available": res_com.get("available"),
+                "reason": res_com.get("reason"),
+                "error": res_com.get("error"),
+                "rdap": res_com.get("rdap"),
+                "local": com_local,
+                "is_starred": bool(com_local and com_local.get("is_starred"))
+            }
+
+            net_data = {
+                "domain": domain_net,
+                "available": res_net.get("available"),
+                "reason": res_net.get("reason"),
+                "error": res_net.get("error"),
+                "rdap": res_net.get("rdap"),
+                "local": net_local,
+                "is_starred": bool(net_local and net_local.get("is_starred"))
+            }
 
             self.send_json({
                 "code": 0,
                 "data": {
-                    "domain": target_domain,
-                    "available": inspect_res.get("available"),
-                    "reason": inspect_res.get("reason"),
-                    "error": inspect_res.get("error"),
-                    "rdap": inspect_res.get("rdap"),
-                    "local": local_record
+                    "prefix": prefix,
+                    "com": com_data,
+                    "net": net_data,
+                    # 向下兼容原有单对象字段
+                    "domain": domain_com,
+                    "available": res_com.get("available"),
+                    "reason": res_com.get("reason"),
+                    "error": res_com.get("error"),
+                    "rdap": res_com.get("rdap"),
+                    "local": com_local,
+                    "is_starred": bool(com_local and com_local.get("is_starred"))
                 }
             })
             return

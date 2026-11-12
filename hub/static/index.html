@@ -843,6 +843,24 @@
             </div>
           </div>
 
+          <!-- 0. 后缀过滤 (全部 / .com / .net) -->
+          <div class="flex items-center gap-1.5 shrink-0">
+            <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
+              <span>🌐</span> 后缀:
+            </span>
+            <div class="flex items-center gap-1 bg-slate-900 p-0.5 rounded-lg border border-slate-800">
+              <button @click="tldFilter = ''; page = 1; fetchDomains()"
+                :class="!tldFilter ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-400 hover:text-white'"
+                class="px-2 py-0.5 rounded text-[11px] transition">全部</button>
+              <button @click="tldFilter = 'com'; page = 1; fetchDomains()"
+                :class="tldFilter === 'com' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-400 hover:text-white'"
+                class="px-2 py-0.5 rounded text-[11px] transition font-mono">.com</button>
+              <button @click="tldFilter = 'net'; page = 1; fetchDomains()"
+                :class="tldFilter === 'net' ? 'bg-indigo-600 text-white font-semibold' : 'text-slate-400 hover:text-white'"
+                class="px-2 py-0.5 rounded text-[11px] transition font-mono">.net</button>
+            </div>
+          </div>
+
           <!-- 2. 字符勾选框 (字母 / 数字 / 连字符) -->
           <div class="flex items-center gap-1.5 shrink-0">
             <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1">
@@ -1300,9 +1318,12 @@
                   class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
               </div>
               <div>
-                <label class="block text-slate-300 font-medium mb-1">顶级后缀:</label>
-                <input v-model="dispatchForm.suffix" type="text"
-                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white">
+                <label class="block text-slate-300 font-medium mb-1">顶级后缀 (Verisign 权威根):</label>
+                <select v-model="dispatchForm.suffix"
+                  class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono text-xs focus:outline-none focus:border-indigo-500">
+                  <option value="com">👑 .com (全球通用)</option>
+                  <option value="net">🌐 .net (经典网络)</option>
+                </select>
               </div>
             </div>
 
@@ -1607,10 +1628,10 @@
 
 
 
-    <!-- 模态框 4：单域名权威深度即验 (形态 A 浮层面板) -->
+    <!-- 模态框 4：单域名权威深度即验 (Verisign .com + .net 双通道并排对比) -->
     <div v-if="showInspectorModal"
       class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div class="inspector-modal-card bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-xl shadow-2xl flex flex-col my-auto overflow-hidden animate-fade-in">
+      <div class="inspector-modal-card bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-4xl shadow-2xl flex flex-col my-auto overflow-hidden animate-fade-in">
 
         <!-- Modal 头部 -->
         <div class="inspector-modal-header flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
@@ -1619,8 +1640,8 @@
               🔍
             </div>
             <div>
-              <h3 class="text-sm font-bold text-white tracking-wide">单域名权威深度即验</h3>
-              <p class="text-[11px] text-slate-400">穿透 Verisign RDAP 权威根库 · 毫秒级查验未注册与一键星标收藏</p>
+              <h3 class="text-sm font-bold text-white tracking-wide">单域名权威深度即验 (Verisign RDAP 双通道)</h3>
+              <p class="text-[11px] text-slate-400">穿透 Verisign 官方根库 · 毫秒级同时核验与对比 .com 与 .net 真实状态</p>
             </div>
           </div>
           <button @click="closeInspectorModal" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
@@ -1633,14 +1654,14 @@
               <input ref="inspectorInputRef"
                 v-model="inspectorDomainInput"
                 @keyup.enter="runDomainInspect"
-                placeholder="输入待查域名，如 tesla、openai.com、888888 (回车即查)"
+                placeholder="输入待查前缀或任意域名，如 tesla、openai.com、88888 (回车即查)"
                 class="inspector-input-box w-full bg-slate-950 border border-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 rounded-xl px-3.5 py-2.5 text-white font-mono text-sm placeholder:text-slate-500 pr-24 transition">
               <div class="absolute right-1.5 flex items-center gap-1">
                 <button v-if="inspectorDomainInput" @click="inspectorDomainInput = ''" class="text-slate-500 hover:text-slate-300 px-1 text-xs">✕</button>
                 <button @click="runDomainInspect" :disabled="inspecting || !inspectorDomainInput.trim()"
                   class="px-3.5 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 disabled:opacity-50 text-white font-semibold rounded-lg shadow-md transition flex items-center gap-1 text-xs">
                   <span v-if="inspecting" class="animate-spin inline-block">⏳</span>
-                  <span>{{ inspecting ? '查验中' : '立即查验' }}</span>
+                  <span>{{ inspecting ? '查验中' : '立即双验' }}</span>
                 </button>
               </div>
             </div>
@@ -1648,151 +1669,224 @@
             <!-- 快捷示例药丸 -->
             <div class="flex items-center gap-2 pt-1 text-[11px] text-slate-400 flex-wrap">
               <span class="text-slate-500">快捷示例:</span>
-              <button @click="inspectorDomainInput = '888888'; runDomainInspect()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 rounded border border-slate-700 transition">888888</button>
-              <button @click="inspectorDomainInput = 'openai.com'; runDomainInspect()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 rounded border border-slate-700 transition">openai.com</button>
+              <button @click="inspectorDomainInput = '88888'; runDomainInspect()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 rounded border border-slate-700 transition">88888</button>
+              <button @click="inspectorDomainInput = 'openai'; runDomainInspect()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 rounded border border-slate-700 transition">openai</button>
               <button @click="inspectorDomainInput = 'deepseek'; runDomainInspect()" class="px-2 py-0.5 bg-slate-800 hover:bg-slate-700 hover:text-white text-slate-300 rounded border border-slate-700 transition">deepseek</button>
-              <span class="text-slate-500 ml-auto">未填后缀默认自动补全 .com</span>
+              <span class="text-slate-500 ml-auto">⚡ 输入任意后缀自动过滤提取前缀，同时查验 .com 与 .net</span>
             </div>
           </div>
 
           <!-- 查验状态与结果面板 -->
           <!-- 1. 正在连线查验 -->
-          <div v-if="inspecting" class="py-10 text-center space-y-3 bg-slate-950/60 rounded-xl border border-slate-800/80">
-            <div class="inline-block animate-spin text-2xl">⚡</div>
-            <p class="text-sm font-medium text-indigo-300">正在连线 Verisign 权威 RDAP 根服务器...</p>
+          <div v-if="inspecting" class="py-12 text-center space-y-3 bg-slate-950/60 rounded-xl border border-slate-800/80">
+            <div class="inline-block animate-spin text-3xl">⚡</div>
+            <p class="text-sm font-medium text-indigo-300">正在并发连线 Verisign 官方根库，同时查验 .com 与 .net ...</p>
             <p class="text-[11px] text-slate-500">穿透顶级域名根服务器实时直查，杜绝 DNS 缓存或本地脏数据</p>
           </div>
 
-          <!-- 2. 查验结果展示 -->
-          <div v-else-if="inspectResult" class="space-y-3 animate-fade-in">
-            <!-- 状态大卡片：未注册 (Available) -->
-            <div v-if="inspectResult.available === true"
-              class="inspector-avail-card p-4 rounded-xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
-              <div class="flex items-center justify-between flex-wrap gap-2">
-                <div class="flex items-center gap-2.5">
-                  <span class="text-2xl">🎉</span>
-                  <div>
-                    <div class="text-lg font-bold text-white font-mono tracking-tight">{{ inspectResult.domain }}</div>
-                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 mt-0.5">
-                      <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                      <span>权威根库未注册 · 可立即抢注！</span>
+          <!-- 2. 查验结果展示 (双卡片并排对比) -->
+          <div v-else-if="inspectResult && (inspectResult.com || inspectResult.net)" class="space-y-3.5 animate-fade-in">
+            <!-- 顶部主体前缀指示栏 -->
+            <div class="flex items-center justify-between bg-slate-950/80 px-3.5 py-2 rounded-xl border border-slate-800 text-xs">
+              <div class="flex items-center gap-2">
+                <span class="text-slate-400">查验主体前缀:</span>
+                <span class="font-mono font-bold text-sm text-indigo-400">{{ inspectResult.prefix }}</span>
+                <span class="text-[10px] text-slate-500 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">Verisign 官方双通道实时穿透</span>
+              </div>
+              <div class="text-[11px] text-slate-400">
+                双顶级域即时权威核验
+              </div>
+            </div>
+
+            <!-- 双卡片并排对比网格 (小屏单列，大屏双列) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              
+              <!-- 👑 .com 结果卡片 -->
+              <div v-if="inspectResult.com" class="space-y-2.5">
+                <!-- 头部标签 -->
+                <div class="flex items-center justify-between text-xs font-semibold px-1">
+                  <span class="flex items-center gap-1.5 text-indigo-300 font-mono text-sm">
+                    <span>👑</span> {{ inspectResult.com.domain }}
+                  </span>
+                  <span class="text-[10px] px-2 py-0.5 rounded font-mono"
+                    :class="inspectResult.com.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'">
+                    {{ inspectResult.com.available ? '✅ 可立即注册' : '🔒 已被占用' }}
+                  </span>
+                </div>
+
+                <!-- 未注册卡片 -->
+                <div v-if="inspectResult.com.available === true"
+                  class="p-3.5 rounded-xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <div>
+                      <div class="text-xs font-bold text-emerald-300 flex items-center gap-1">
+                        <span>🎉</span> 权威确认未注册！
+                      </div>
+                      <div class="text-[10px] text-slate-400 mt-0.5">{{ inspectResult.com.reason }}</div>
+                    </div>
+                    <button @click="toggleStarTarget(inspectResult.com)"
+                      class="px-2.5 py-1.5 rounded-lg border font-semibold text-xs transition flex items-center gap-1 shrink-0"
+                      :class="inspectResult.com.is_starred ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white border-amber-400/40'">
+                      <span>{{ inspectResult.com.is_starred ? '⭐ 已收藏' : '★ 加入收藏' }}</span>
+                    </button>
+                  </div>
+                  <!-- 购买通道 -->
+                  <div class="pt-1">
+                    <div class="text-slate-400 text-[10px] mb-1.5 font-medium">快速购买直达:</div>
+                    <div class="grid grid-cols-3 gap-1.5 text-center text-xs">
+                      <a :href="'https://www.dynadot.com/domain/search.html?domain=' + inspectResult.com.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        ⚡ Dynadot
+                      </a>
+                      <a :href="'https://www.namesilo.com/domain/search-domains?query=' + inspectResult.com.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        🌐 Namesilo
+                      </a>
+                      <a :href="'https://wanwang.aliyun.com/domain/searchresult/#/?keyword=' + inspectResult.com.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        ☁️ 阿里万网
+                      </a>
                     </div>
                   </div>
                 </div>
 
-                <!-- 收藏星标状态按钮 -->
-                <button @click="toggleStarInspected"
-                  class="px-3.5 py-1.5 rounded-xl border font-semibold text-xs transition flex items-center gap-1.5 shadow-md"
-                  :class="inspectResult.is_starred ? 'bg-amber-500/20 border-amber-500/50 text-amber-300 hover:bg-amber-500/30' : 'bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white border-amber-400/40'">
-                  <span>{{ inspectResult.is_starred ? '⭐ 已在收藏夹' : '★ 加入星标收藏' }}</span>
-                </button>
-              </div>
-
-              <!-- 本地资产库同步提示 -->
-              <div class="inspector-avail-inner flex items-center justify-between text-[11px] text-slate-400 bg-slate-950/80 px-3 py-2 rounded-lg border border-slate-800/80">
-                <div class="flex items-center gap-1.5">
-                  <span>📦 本地资产库:</span>
-                  <span v-if="inspectResult.local" class="text-indigo-400 font-medium">已收录 (模式: {{ inspectResult.local.mode || '-' }})</span>
-                  <span v-else class="text-slate-500">尚未收录 (点击星标收藏即可一键收录入库)</span>
-                </div>
-                <div class="text-emerald-400 font-mono">{{ inspectResult.reason }}</div>
-              </div>
-
-              <!-- 快速抢注平台跳转直达 -->
-              <div class="pt-1">
-                <div class="text-slate-400 text-[11px] mb-2 font-medium">官方快速注册渠道 (点击直达搜索注册页):</div>
-                <div class="grid grid-cols-3 gap-2">
-                  <a :href="'https://www.dynadot.com/domain/search.html?domain=' + inspectResult.domain" target="_blank"
-                    class="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-center rounded-lg border border-slate-700 text-slate-200 hover:text-white font-medium text-xs transition flex items-center justify-center gap-1 group">
-                    <span>⚡ Dynadot</span>
-                    <span class="text-slate-500 group-hover:translate-x-0.5 transition">↗</span>
-                  </a>
-                  <a :href="'https://www.namesilo.com/domain/search-domains?query=' + inspectResult.domain" target="_blank"
-                    class="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-center rounded-lg border border-slate-700 text-slate-200 hover:text-white font-medium text-xs transition flex items-center justify-center gap-1 group">
-                    <span>🌐 Namesilo</span>
-                    <span class="text-slate-500 group-hover:translate-x-0.5 transition">↗</span>
-                  </a>
-                  <a :href="'https://wanwang.aliyun.com/domain/searchresult/#/?keyword=' + inspectResult.domain" target="_blank"
-                    class="py-2 px-3 bg-slate-800 hover:bg-slate-750 text-center rounded-lg border border-slate-700 text-slate-200 hover:text-white font-medium text-xs transition flex items-center justify-center gap-1 group">
-                    <span>☁️ 阿里万网</span>
-                    <span class="text-slate-500 group-hover:translate-x-0.5 transition">↗</span>
-                  </a>
-                </div>
-              </div>
-            </div>
-
-            <!-- 状态大卡片：已被注册 (Registered) -->
-            <div v-else-if="inspectResult.available === false"
-              class="inspector-reg-card p-4 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-3">
-              <div class="flex items-center justify-between flex-wrap gap-2">
-                <div class="flex items-center gap-2.5">
-                  <span class="text-2xl">🔒</span>
-                  <div>
-                    <div class="text-lg font-bold text-white font-mono tracking-tight">{{ inspectResult.domain }}</div>
-                    <div class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30 mt-0.5">
-                      <span class="w-1.5 h-1.5 rounded-full bg-rose-400"></span>
-                      <span>该域名已被注册</span>
+                <!-- 已注册卡片 -->
+                <div v-else-if="inspectResult.com.available === false"
+                  class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-2.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-rose-400 font-medium text-xs flex items-center gap-1">
+                      <span>🚫</span> 已被注册占用
+                    </span>
+                    <button v-if="inspectResult.com.local && inspectResult.com.local.status === 'available'"
+                      @click="syncRegisteredTarget(inspectResult.com)"
+                      class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] transition">
+                      同步已注册
+                    </button>
+                  </div>
+                  <!-- RDAP 注册网格 -->
+                  <div v-if="inspectResult.com.rdap" class="grid grid-cols-2 gap-2 text-[10px] bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
+                    <div>
+                      <span class="text-slate-500">所属注册商:</span>
+                      <div class="text-white font-medium mt-0.5 truncate" :title="inspectResult.com.rdap.registrar">{{ inspectResult.com.rdap.registrar || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">到期时间:</span>
+                      <div class="text-amber-400 font-mono mt-0.5">{{ inspectResult.com.rdap.expires_at || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">注册时间:</span>
+                      <div class="text-slate-400 font-mono mt-0.5">{{ inspectResult.com.rdap.created_at || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">DNS 解析状态:</span>
+                      <div class="text-slate-300 font-mono mt-0.5">{{ inspectResult.com.reason || '已存在' }}</div>
                     </div>
                   </div>
                 </div>
 
-                <!-- 若本地库仍为 available，提供一键同步 -->
-                <div v-if="inspectResult.local && inspectResult.local.status === 'available'">
-                  <button @click="syncDomainToRegistered"
-                    class="px-2.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-medium text-xs transition flex items-center gap-1 shadow">
-                    <span>🔄</span>
-                    <span>同步为已注册</span>
-                  </button>
+                <!-- 异常卡片 -->
+                <div v-else class="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 text-center text-xs space-y-1">
+                  <div class="text-rose-300 font-medium">{{ inspectResult.com.error || '查验遇到异常' }}</div>
+                  <div class="text-slate-400 text-[10px]">{{ inspectResult.com.reason }}</div>
                 </div>
               </div>
 
-              <!-- RDAP 详实注册信息网格 -->
-              <div v-if="inspectResult.rdap" class="inspector-reg-grid grid grid-cols-2 gap-2 text-[11px] bg-slate-900 p-3 rounded-lg border border-slate-800">
-                <div>
-                  <span class="text-slate-400">所属注册商:</span>
-                  <div class="text-white font-medium mt-0.5 truncate" :title="inspectResult.rdap.registrar">{{ inspectResult.rdap.registrar || '-' }}</div>
+              <!-- 🌐 .net 结果卡片 -->
+              <div v-if="inspectResult.net" class="space-y-2.5">
+                <!-- 头部标签 -->
+                <div class="flex items-center justify-between text-xs font-semibold px-1">
+                  <span class="flex items-center gap-1.5 text-sky-300 font-mono text-sm">
+                    <span>🌐</span> {{ inspectResult.net.domain }}
+                  </span>
+                  <span class="text-[10px] px-2 py-0.5 rounded font-mono"
+                    :class="inspectResult.net.available ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40' : 'bg-slate-800 text-slate-400'">
+                    {{ inspectResult.net.available ? '✅ 可立即注册' : '🔒 已被占用' }}
+                  </span>
                 </div>
-                <div>
-                  <span class="text-slate-400">到期时间 (Expires):</span>
-                  <div class="text-amber-400 font-mono font-medium mt-0.5">{{ inspectResult.rdap.expires_at || '-' }}</div>
-                </div>
-                <div>
-                  <span class="text-slate-400">注册时间 (Created):</span>
-                  <div class="text-slate-300 font-mono mt-0.5">{{ inspectResult.rdap.created_at || '-' }}</div>
-                </div>
-                <div>
-                  <span class="text-slate-400">更新时间 (Updated):</span>
-                  <div class="text-slate-300 font-mono mt-0.5">{{ inspectResult.rdap.updated_at || '-' }}</div>
-                </div>
-                <div class="col-span-2 pt-1 border-t border-slate-800">
-                  <span class="text-slate-400">权威 DNS 服务器:</span>
-                  <div class="text-slate-300 font-mono text-[10px] mt-0.5 flex flex-wrap gap-1">
-                    <span v-for="ns in (inspectResult.rdap.nameservers || [])" :key="ns"
-                      class="px-1.5 py-0.5 bg-slate-800 rounded text-slate-300">{{ ns }}</span>
-                    <span v-if="!inspectResult.rdap.nameservers || inspectResult.rdap.nameservers.length === 0" class="text-slate-500">未公开</span>
+
+                <!-- 未注册卡片 -->
+                <div v-if="inspectResult.net.available === true"
+                  class="p-3.5 rounded-xl bg-gradient-to-br from-emerald-950/60 via-slate-900 to-slate-900 border border-emerald-500/40 shadow-xl space-y-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <div>
+                      <div class="text-xs font-bold text-emerald-300 flex items-center gap-1">
+                        <span>🎉</span> 权威确认未注册！
+                      </div>
+                      <div class="text-[10px] text-slate-400 mt-0.5">{{ inspectResult.net.reason }}</div>
+                    </div>
+                    <button @click="toggleStarTarget(inspectResult.net)"
+                      class="px-2.5 py-1.5 rounded-lg border font-semibold text-xs transition flex items-center gap-1 shrink-0"
+                      :class="inspectResult.net.is_starred ? 'bg-amber-500/20 border-amber-500/50 text-amber-300' : 'bg-gradient-to-r from-amber-600 to-yellow-600 text-white border-amber-400/40'">
+                      <span>{{ inspectResult.net.is_starred ? '⭐ 已收藏' : '★ 加入收藏' }}</span>
+                    </button>
+                  </div>
+                  <!-- 购买通道 -->
+                  <div class="pt-1">
+                    <div class="text-slate-400 text-[10px] mb-1.5 font-medium">快速购买直达:</div>
+                    <div class="grid grid-cols-3 gap-1.5 text-center text-xs">
+                      <a :href="'https://www.dynadot.com/domain/search.html?domain=' + inspectResult.net.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        ⚡ Dynadot
+                      </a>
+                      <a :href="'https://www.namesilo.com/domain/search-domains?query=' + inspectResult.net.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        🌐 Namesilo
+                      </a>
+                      <a :href="'https://wanwang.aliyun.com/domain/searchresult/#/?keyword=' + inspectResult.net.domain" target="_blank"
+                        class="py-1.5 px-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded border border-slate-700 text-[11px] transition">
+                        ☁️ 阿里万网
+                      </a>
+                    </div>
                   </div>
                 </div>
+
+                <!-- 已注册卡片 -->
+                <div v-else-if="inspectResult.net.available === false"
+                  class="p-3.5 rounded-xl bg-slate-950/80 border border-slate-800 shadow-xl space-y-2.5">
+                  <div class="flex items-center justify-between">
+                    <span class="text-rose-400 font-medium text-xs flex items-center gap-1">
+                      <span>🚫</span> 已被注册占用
+                    </span>
+                    <button v-if="inspectResult.net.local && inspectResult.net.local.status === 'available'"
+                      @click="syncRegisteredTarget(inspectResult.net)"
+                      class="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded text-[10px] transition">
+                      同步已注册
+                    </button>
+                  </div>
+                  <!-- RDAP 注册网格 -->
+                  <div v-if="inspectResult.net.rdap" class="grid grid-cols-2 gap-2 text-[10px] bg-slate-900 p-2.5 rounded-lg border border-slate-800/80">
+                    <div>
+                      <span class="text-slate-500">所属注册商:</span>
+                      <div class="text-white font-medium mt-0.5 truncate" :title="inspectResult.net.rdap.registrar">{{ inspectResult.net.rdap.registrar || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">到期时间:</span>
+                      <div class="text-amber-400 font-mono mt-0.5">{{ inspectResult.net.rdap.expires_at || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">注册时间:</span>
+                      <div class="text-slate-400 font-mono mt-0.5">{{ inspectResult.net.rdap.created_at || '-' }}</div>
+                    </div>
+                    <div>
+                      <span class="text-slate-500">DNS 解析状态:</span>
+                      <div class="text-slate-300 font-mono mt-0.5">{{ inspectResult.net.reason || '已存在' }}</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- 异常卡片 -->
+                <div v-else class="p-3 rounded-xl bg-rose-950/30 border border-rose-800/40 text-center text-xs space-y-1">
+                  <div class="text-rose-300 font-medium">{{ inspectResult.net.error || '查验遇到异常' }}</div>
+                  <div class="text-slate-400 text-[10px]">{{ inspectResult.net.reason }}</div>
+                </div>
               </div>
 
-              <!-- 本地状态提示 -->
-              <div v-if="inspectResult.local" class="text-[11px] text-slate-400 flex items-center justify-between px-1">
-                <span>本地记录状态: <b :class="inspectResult.local.status === 'available' ? 'text-amber-400' : 'text-slate-400'">{{ inspectResult.local.status }}</b></span>
-                <span v-if="inspectResult.local.is_starred" class="text-amber-400">⭐ 收藏星标中</span>
-              </div>
-            </div>
-
-            <!-- 异常卡片 (如限频或超时) -->
-            <div v-else class="p-4 rounded-xl bg-rose-950/30 border border-rose-800/40 text-center space-y-2">
-              <div class="text-xl">⚠️</div>
-              <div class="text-rose-300 font-semibold">{{ inspectResult.error || '查验遇到异常' }}</div>
-              <div class="text-slate-400 text-[11px]">{{ inspectResult.reason }}</div>
-              <button @click="runDomainInspect" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs mt-1 transition">重试</button>
             </div>
           </div>
         </div>
 
         <div class="inspector-modal-footer p-3.5 border-t border-slate-800 shrink-0 bg-slate-900 flex items-center justify-between text-[11px] text-slate-400">
-          <span>💡 提示：输入纯前缀 (如 ai88) 将默认查验 .com 后缀权威状态</span>
+          <span>💡 提示：输入任意后缀 (如 .xyz, .cn) 均自动过滤为前缀，毫秒级并排查验 .com 与 .net</span>
           <button @click="closeInspectorModal" class="px-3 py-1 text-slate-400 hover:text-white rounded-lg transition">关闭</button>
         </div>
       </div>
@@ -1999,6 +2093,7 @@
           searchModeOverride.value = 'auto';
           prefixFilter.value = '';
           suffixFilter.value = '';
+          tldFilter.value = '';
           hasVowel.value = false;
           excludeRare.value = false;
           page.value = 1;
@@ -2447,13 +2542,14 @@
           const len = dispatchForm.value.length;
           const hasH = dispatchForm.value.use_hyphen;
           const sample = dispatchForm.value.use_digits && !dispatchForm.value.use_letters ? '123456' : (dispatchForm.value.use_digits ? 'a1b2c3' : 'abcdef');
+          const s = dispatchForm.value.suffix || 'com';
           if (!hasH) {
-            return `${sample.slice(0, len)}.com`;
+            return `${sample.slice(0, len)}.${s}`;
           }
-          if (len === 3) return '1-2.com, a-b.com';
-          if (len === 4) return '1-23.com, 12-3.com, a-bc.com, ab-c.com';
-          if (len === 5) return 'ab-cd.com, a-bcd.com, abc-d.com';
-          return 'abc-def.com, ab-cdef.com';
+          if (len === 3) return `1-2.${s}, a-b.${s}`;
+          if (len === 4) return `1-23.${s}, 12-3.${s}, a-bc.${s}, ab-c.${s}`;
+          if (len === 5) return `ab-cd.${s}, a-bcd.${s}, abc-d.${s}`;
+          return `abc-def.${s}, ab-cdef.${s}`;
         });
 
         const perNodeCount = computed(() => {
@@ -2635,6 +2731,7 @@
               search_mode: isSearchTemplateMode.value ? 'template' : (searchModeOverride.value === 'literal' ? 'literal' : 'auto'),
               prefix: prefixFilter.value,
               suffix: suffixFilter.value,
+              tld: tldFilter.value,
               has_vowel: hasVowel.value ? '1' : '0',
               exclude_rare: excludeRare.value ? '1' : '0'
             });
@@ -2923,8 +3020,11 @@
           }, 100);
         };
 
+        const tldFilter = ref(''); // '' | 'com' | 'net'
+
         const inspectDomainFromList = (domain) => {
-          inspectorDomainInput.value = domain;
+          const raw = (domain || '').trim().split('.')[0].trim();
+          inspectorDomainInput.value = raw;
           showInspectorModal.value = true;
           runDomainInspect();
         };
@@ -2946,35 +3046,29 @@
             });
             const data = await res.json();
             if (data.code === 0 && data.data) {
-              const d = data.data;
-              inspectResult.value = {
-                ...d,
-                is_starred: Boolean(d.local && d.local.is_starred)
-              };
+              inspectResult.value = data.data;
             } else {
               inspectResult.value = {
-                domain: raw,
-                available: null,
-                error: data.msg || '查验遇到异常',
-                reason: '请求失败'
+                prefix: raw,
+                com: { domain: `${raw}.com`, available: null, error: data.msg || '查验遇到异常', reason: '请求失败' },
+                net: { domain: `${raw}.net`, available: null, error: data.msg || '查验遇到异常', reason: '请求失败' }
               };
             }
           } catch (e) {
             inspectResult.value = {
-              domain: raw,
-              available: null,
-              error: '网络请求超时或异常',
-              reason: '连线失败'
+              prefix: raw,
+              com: { domain: `${raw}.com`, available: null, error: '网络请求超时或异常', reason: '连线失败' },
+              net: { domain: `${raw}.net`, available: null, error: '网络请求超时或异常', reason: '连线失败' }
             };
           } finally {
             inspecting.value = false;
           }
         };
 
-        const toggleStarInspected = async () => {
-          if (!inspectResult.value || !inspectResult.value.domain) return;
-          const targetDomain = inspectResult.value.domain;
-          const nextState = !inspectResult.value.is_starred;
+        const toggleStarTarget = async (card) => {
+          if (!card || !card.domain) return;
+          const targetDomain = card.domain;
+          const nextState = !card.is_starred;
           try {
             const res = await fetch('/api/domain/star_direct', {
               method: 'POST',
@@ -2983,15 +3077,15 @@
             });
             const data = await res.json();
             if (data.code === 0) {
-              inspectResult.value.is_starred = Boolean(data.is_starred);
-              if (!inspectResult.value.local) {
-                inspectResult.value.local = {
+              card.is_starred = Boolean(data.is_starred);
+              if (!card.local) {
+                card.local = {
                   domain: targetDomain,
                   status: 'available',
                   is_starred: data.is_starred ? 1 : 0
                 };
               } else {
-                inspectResult.value.local.is_starred = data.is_starred ? 1 : 0;
+                card.local.is_starred = data.is_starred ? 1 : 0;
               }
               showToast(data.msg);
               fetchStats();
@@ -3006,9 +3100,9 @@
           }
         };
 
-        const syncDomainToRegistered = async () => {
-          if (!inspectResult.value || !inspectResult.value.domain) return;
-          const targetDomain = inspectResult.value.domain;
+        const syncRegisteredTarget = async (card) => {
+          if (!card || !card.domain) return;
+          const targetDomain = card.domain;
           try {
             const res = await fetch('/api/domain/sync_registered', {
               method: 'POST',
@@ -3017,8 +3111,9 @@
             });
             const data = await res.json();
             if (data.code === 0) {
-              if (inspectResult.value.local) {
-                inspectResult.value.local.status = 'registered';
+              card.available = false;
+              if (card.local) {
+                card.local.status = 'registered';
               }
               showToast(data.msg);
               fetchStats();
@@ -3087,7 +3182,7 @@
           copyText, copyAllCurrentPageDomains, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           refreshAll,
           showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef, inspectDomainFromList,
-          openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarInspected, syncDomainToRegistered
+          openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarTarget, syncRegisteredTarget, tldFilter
         };
       }
     }).mount('#app');
