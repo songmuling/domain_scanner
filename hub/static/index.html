@@ -2362,9 +2362,12 @@
         };
 
         const canDispatch = computed(() => {
-          const hasChars = dispatchForm.value.use_letters || dispatchForm.value.use_digits;
           const hasSelected = selectedNodeList.value.length > 0;
           const allOnline = selectedNodeList.value.every(id => onlineNodes.value.some(n => n.node_id === id));
+          if (dispatchForm.value.mode_type === 'template') {
+            return Boolean(templateMeta.value.valid) && hasSelected && allOnline;
+          }
+          const hasChars = dispatchForm.value.use_letters || dispatchForm.value.use_digits;
           return hasChars && hasSelected && allOnline;
         });
 
@@ -2626,7 +2629,8 @@
             showToast('请至少勾选一个处于在线就绪状态的 Agent 节点');
             return;
           }
-          if (dispatchForm.value.mode_type === 'template') {
+          const isTemplate = dispatchForm.value.mode_type === 'template';
+          if (isTemplate) {
             if (!templateMeta.value.valid) {
               showToast(templateMeta.value.error || '模板表达式语法不正确');
               return;
@@ -2639,7 +2643,7 @@
           }
 
           let filterPayload = null;
-          if (dispatchForm.value.storage_filter && dispatchForm.value.storage_filter.enabled) {
+          if (!isTemplate && dispatchForm.value.storage_filter && dispatchForm.value.storage_filter.enabled) {
             const sf = dispatchForm.value.storage_filter;
             const patterns = [];
             if (sf.has_patterns) {
@@ -2670,17 +2674,17 @@
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                mode_type: dispatchForm.value.mode_type,
-                template: dispatchForm.value.template,
-                length: dispatchForm.value.length,
-                use_letters: dispatchForm.value.use_letters,
-                use_digits: dispatchForm.value.use_digits,
-                use_hyphen: dispatchForm.value.use_hyphen,
-                reset_checkpoint: dispatchForm.value.reset_checkpoint,
+                mode_type: isTemplate ? 'template' : 'standard',
+                template: isTemplate ? (dispatchForm.value.template || '').trim() : null,
+                length: Number(dispatchForm.value.length),
+                use_letters: Boolean(dispatchForm.value.use_letters),
+                use_digits: Boolean(dispatchForm.value.use_digits),
+                use_hyphen: Boolean(dispatchForm.value.use_hyphen),
+                reset_checkpoint: Boolean(dispatchForm.value.reset_checkpoint),
                 suffix: dispatchForm.value.suffix,
-                threads: dispatchForm.value.threads,
+                threads: Number(dispatchForm.value.threads),
                 nodes: validSelected,
-                storage_filter: filterPayload
+                storage_filter: isTemplate ? null : filterPayload
               })
             });
             const data = await res.json();

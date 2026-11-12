@@ -2621,9 +2621,14 @@ class HubHandler(BaseHTTPRequestHandler):
                 }, 400)
                 return
 
-            is_template_mode = (data.get("mode_type") == "template") or bool(data.get("template"))
+            mode_type = data.get("mode_type")
+            if mode_type:
+                is_template_mode = (mode_type == "template")
+            else:
+                is_template_mode = bool(data.get("template"))
+
             if is_template_mode:
-                template_str = data.get("template", "").strip()
+                template_str = (data.get("template") or "").strip()
                 if not template_str:
                     self.send_json({"code": 1, "msg": "定向模板表达式不能为空"}, 400)
                     return
