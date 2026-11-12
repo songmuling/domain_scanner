@@ -1453,10 +1453,11 @@ BATCH_RECHECK_STATE = {
     "still_available": 0,
     "current_domain": "",
     "started_at": None,
-    "finished_at": None
+    "finished_at": None,
+    "target_nodes": []
 }
 
-def start_batch_recheck(mode="all"):
+def start_batch_recheck(mode="all", nodes=None):
     global BATCH_RECHECK_STATE
     if BATCH_RECHECK_STATE["is_running"]:
         return False, "已有正在执行的批量复验任务"
@@ -1472,6 +1473,8 @@ def start_batch_recheck(mode="all"):
     if not target_domains:
         return False, "当前模式下没有可复核的未注册域名"
 
+    assigned_nodes = list(nodes) if nodes else []
+
     BATCH_RECHECK_STATE = {
         "is_running": True,
         "mode": mode,
@@ -1481,7 +1484,8 @@ def start_batch_recheck(mode="all"):
         "still_available": 0,
         "current_domain": "",
         "started_at": datetime.now().isoformat(),
-        "finished_at": None
+        "finished_at": None,
+        "target_nodes": assigned_nodes
     }
 
     def _worker():
@@ -1508,8 +1512,9 @@ def start_batch_recheck(mode="all"):
                 conn.commit()
 
         try:
-            max_workers = 4
-            max_in_flight = 8
+            node_count = len(assigned_nodes) if assigned_nodes else 1
+            max_workers = max(4, min(32, node_count * 4))
+            max_in_flight = max_workers * 2
             in_flight = {}
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -2859,7 +2864,8 @@ class HubHandler(BaseHTTPRequestHandler):
         if path == "/api/domain/batch_recheck":
             data = self.read_json_body()
             mode = data.get("mode", "all")
-            ok, msg = start_batch_recheck(mode)
+            nodes = data.get("nodes", [])
+            ok, msg = start_batch_recheck(mode, nodes)
             self.send_json({"code": 0 if ok else 1, "msg": msg, "data": BATCH_RECHECK_STATE})
             return
 

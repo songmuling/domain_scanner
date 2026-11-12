@@ -567,14 +567,6 @@
         <div>
           <div class="flex items-center gap-2">
             <h1 class="text-xl font-bold tracking-tight text-white">Domain Swarm 控制中心</h1>
-            <span
-              class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-indigo-950/80 text-indigo-300 border border-indigo-800/50">
-              Nezha Master-Agent 架构
-            </span>
-            <span
-              class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-emerald-950/80 text-emerald-400 border border-emerald-800/50">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse mr-1.5"></span>实时集群中
-            </span>
           </div>
           <p class="text-xs text-slate-400 mt-0.5">多机任务分发 · 自动分片调度 · 资产入库与在线复检</p>
         </div>
@@ -792,89 +784,48 @@
       </div>
     </section>
 
-    <!-- 域名探索与资产库控制台 (极简紧凑 2 排布局) -->
+    <!-- 域名探索与资产库控制台 (3 排清晰层级布局) -->
     <section class="bg-slate-900/60 border border-slate-800/80 rounded-2xl p-3.5 sm:p-4 space-y-2.5">
-      <!-- 第 1 排：搜索、前后缀、只看收藏开关与全局操作 -->
-      <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
-        <!-- 左侧输入与收藏 -->
-        <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[300px]">
-          <!-- 搜索框 (支持关键词与定向模板掩码智能感知) -->
-          <div class="relative flex-1 min-w-[220px] max-w-sm">
-            <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()"
-              :placeholder="isSearchTemplateMode ? '🎯 模板模式: 如 DDDDDD, LL888 ...' : '🔍 搜关键字 (如: vip) 或模板 (如: DDDDDD)...'"
-              class="w-full bg-slate-900 border rounded-lg pl-3 pr-20 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
-              :class="isSearchTemplateMode ? 'border-indigo-500/80 bg-indigo-950/20 template-active-input' : 'border-slate-700/80'">
-            <!-- 模式指示与切换小胶囊 -->
-            <button v-if="searchKeyword.trim()" type="button" @click="toggleSearchMode"
-              class="absolute right-1.5 top-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono transition flex items-center gap-0.5 cursor-pointer select-none"
-              :class="isSearchTemplateMode ? 'bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-600/60 search-mode-pill-active' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200'"
-              :title="isSearchTemplateMode ? '当前为【🎯 模板掩码】模式，点击切换为【🔤 纯字面量】' : '当前为【🔤 普通关键词】模式，点击切换为【🎯 模板掩码】'">
-              <span>{{ isSearchTemplateMode ? '🎯 模板' : '🔤 关键词' }}</span>
-            </button>
-          </div>
-          <!-- 前缀 -->
-          <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="前缀如: ai-"
-            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
-          <!-- 后缀 -->
-          <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="后缀如: -os"
-            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
-
-          <!-- ⭐ 只看我的收藏 (点击只看收藏，再点取消) -->
-          <button @click="toggleOnlyStarred"
-            :class="onlyStarred ? 'bg-amber-500/15 text-amber-500 border-amber-400 font-semibold shadow-sm' : 'bg-slate-800/80 hover:bg-slate-700 text-slate-300 border-slate-700'"
-            class="px-2.5 py-1.5 rounded-lg border text-xs transition flex items-center gap-1.5 shrink-0"
-            :title="onlyStarred ? '当前正处于【只看收藏】，点击恢复查看全部' : '点击只看我的收藏'">
-            <span>⭐</span>
-            <span>只看收藏</span>
-            <span v-if="stats?.total_starred > 0" class="px-1.5 py-0.2 rounded-full text-[10px] font-mono"
-              :class="onlyStarred ? 'bg-amber-400/20 text-amber-500' : 'bg-slate-900/60 text-slate-400'">
-              {{ stats?.total_starred }}
-            </span>
-          </button>
-        </div>
-
-        <!-- 右侧操作与重置 -->
-        <div class="flex items-center gap-2 shrink-0">
-          <button v-if="hasActiveFilter" @click="resetFilters"
-            class="px-2.5 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition flex items-center gap-1">
-            <span>↺</span> 重置
-          </button>
-          <button @click="openBatchRecheckModal = true"
-            class="px-2.5 py-1.5 rounded-lg border border-indigo-700/60 bg-indigo-950/40 text-indigo-300 hover:bg-indigo-900/60 transition flex items-center gap-1 text-xs font-medium shadow-sm">
-            <span>🔄 存量复验</span>
-          </button>
-
-        </div>
-      </div>
-
-      <!-- 模式分类直达药丸栏 (从顶部KPI卡下移整合) -->
+      <!-- 第 1 排：分类直达 (模式资产分布、全部资产与我的收藏) -->
       <div v-if="modeStatsList.length > 0" class="flex flex-wrap items-center gap-1.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-xs">
         <span class="text-slate-400 font-medium text-[11px] flex items-center gap-1 shrink-0 select-none mr-1">
           <span>📦</span> 分类直达:
         </span>
         <!-- 全部资产按钮 -->
-        <button @click="clearModeFilter"
+        <button @click="selectAllAssets"
           class="px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer border flex items-center gap-1 shrink-0"
-          :class="!activeModeFilter ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-white'">
+          :class="!activeModeFilter && !onlyStarred ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-white'">
           <span>全部资产</span>
-          <span class="text-[10px] opacity-80 font-mono">({{ formatCompactNumber(stats?.total_domains || 0) }})</span>
+          <span class="text-[10px] opacity-80 font-mono">({{ formatCompactNumber(stats?.total_available || 0) }})</span>
+        </button>
+
+        <!-- ⭐ 我的收藏 (挪至全部资产后方) -->
+        <button @click="toggleOnlyStarred"
+          class="px-2.5 py-1 rounded-lg text-xs font-medium transition cursor-pointer border flex items-center gap-1.5 shrink-0"
+          :class="onlyStarred ? 'bg-amber-500/25 text-amber-400 border-amber-500/70 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-800 hover:text-amber-300'"
+          :title="onlyStarred ? '当前正处于【只看收藏】，点击恢复查看全部' : '点击快速只看我的星标收藏'">
+          <span>⭐ 只看收藏</span>
+          <span class="text-[10px] px-1.5 py-0.2 rounded font-mono"
+            :class="onlyStarred ? 'bg-amber-500/30 text-amber-300 font-bold' : 'bg-slate-800 text-slate-400'">
+            {{ stats?.total_starred || 0 }}
+          </span>
         </button>
 
         <!-- 各模式分类药丸 (按资产规模降序排列) -->
         <button v-for="item in modeStatsList" :key="item.mode"
           @click="selectModeFromStats(item.mode)"
           class="px-2 py-1 rounded-lg text-xs font-mono transition cursor-pointer border flex items-center gap-1.5 shrink-0"
-          :class="activeModeFilter === item.mode ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 hover:border-slate-700 text-slate-300 border-slate-800'"
+          :class="activeModeFilter === item.mode && !onlyStarred ? 'bg-indigo-600 text-white border-indigo-500 shadow-sm font-semibold' : 'bg-slate-900 hover:bg-slate-800 hover:border-slate-700 text-slate-300 border-slate-800'"
           :title="'筛选模式: ' + item.mode + ' (' + item.count.toLocaleString() + ' 条资产)'">
           <span>{{ item.mode }}</span>
           <span class="text-[10px] px-1.5 py-0.2 rounded font-mono"
-            :class="activeModeFilter === item.mode ? 'bg-indigo-700/80 text-white' : 'bg-slate-800 text-slate-400'">
+            :class="activeModeFilter === item.mode && !onlyStarred ? 'bg-indigo-700/80 text-white' : 'bg-slate-800 text-slate-400'">
             {{ formatCompactNumber(item.count) }}
           </span>
         </button>
       </div>
 
-      <!-- 第 2 排：位数多选(3 4 5 6)、字符多选(字母 数字 连字符)、靓号雷达下拉与淘金药丸 -->
+      <!-- 第 2 排：快捷搜索 (位数多选、字符组成、靓号形态雷达) -->
       <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800 text-xs">
         <div class="flex flex-wrap items-center gap-2.5 lg:gap-3.5">
           <!-- 1. 位数勾选框 (3 4 5 6) -->
@@ -916,7 +867,7 @@
             </div>
           </div>
 
-          <!-- 3. 靓号雷达下拉 -->
+          <!-- 3. 靓号雷达下拉 (连字、连顺、形态) -->
           <div class="flex items-center gap-1.5 shrink-0">
             <span class="text-indigo-400 font-medium text-[11px] flex items-center gap-1">
               <span>💎</span> 雷达:
@@ -938,25 +889,6 @@
               <option v-for="opt in patternOptions" :key="opt.value" :value="opt.value">{{ opt.label }}</option>
             </select>
           </div>
-
-          <!-- 4. 淘金辅助微调 (双拼、元音、声母) -->
-          <div class="flex items-center gap-1.5 shrink-0">
-            <button @click="isPronounceable = !isPronounceable; page = 1; fetchDomains()"
-              :class="isPronounceable ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
-              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="元音辅音交替易读双拼">
-              <span>🗣️ 双拼</span>
-            </button>
-            <button @click="hasVowel = !hasVowel; page = 1; fetchDomains()"
-              :class="hasVowel ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
-              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="至少包含一个元音 (a/e/i/o/u)">
-              <span>🔤 元音</span>
-            </button>
-            <button @click="excludeRare = !excludeRare; page = 1; fetchDomains()"
-              :class="excludeRare ? 'bg-indigo-600/30 border-indigo-500 text-indigo-300 font-semibold shadow-sm' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'"
-              class="px-2 py-1 rounded-lg border text-[11px] transition flex items-center gap-1" title="剔除生僻声母 (q/x/z/v/y)">
-              <span>🚫 避冷门</span>
-            </button>
-          </div>
         </div>
 
         <!-- 筛选摘要 -->
@@ -965,6 +897,41 @@
           <span class="font-mono text-indigo-300 font-medium text-[11px] px-2 py-0.5 bg-indigo-950/80 rounded border border-indigo-800/60 max-w-[200px] truncate" :title="activeFilterSummary">
             {{ activeFilterSummary }}
           </span>
+        </div>
+      </div>
+
+      <!-- 第 3 排：自定义搜索 (搜索框、前后缀与全局重置) -->
+      <div class="flex flex-wrap items-center justify-between gap-2.5 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800">
+        <!-- 左侧输入 -->
+        <div class="flex flex-wrap items-center gap-2 flex-1 min-w-[300px]">
+          <!-- 搜索框 (支持关键词与定向模板掩码智能感知) -->
+          <div class="relative flex-1 min-w-[220px] max-w-sm">
+            <input v-model="searchKeyword" @keyup.enter="page = 1; fetchDomains()"
+              :placeholder="isSearchTemplateMode ? '🎯 模板模式: 如 DDDDDD, LL888 ...' : '🔍 搜关键字 (如: vip) 或模板 (如: DDDDDD)...'"
+              class="w-full bg-slate-900 border rounded-lg pl-3 pr-20 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none transition font-mono"
+              :class="isSearchTemplateMode ? 'border-indigo-500/80 bg-indigo-950/20 template-active-input' : 'border-slate-700/80'">
+            <!-- 模式指示与切换小胶囊 -->
+            <button v-if="searchKeyword.trim()" type="button" @click="toggleSearchMode"
+              class="absolute right-1.5 top-1.5 px-1.5 py-0.5 rounded text-[10px] font-mono transition flex items-center gap-0.5 cursor-pointer select-none"
+              :class="isSearchTemplateMode ? 'bg-indigo-600/40 text-indigo-300 border border-indigo-500/50 hover:bg-indigo-600/60 search-mode-pill-active' : 'bg-slate-800 text-slate-400 border border-slate-700 hover:text-slate-200'"
+              :title="isSearchTemplateMode ? '当前为【🎯 模板掩码】模式，点击切换为【🔤 纯字面量】' : '当前为【🔤 普通关键词】模式，点击切换为【🎯 模板掩码】'">
+              <span>{{ isSearchTemplateMode ? '🎯 模板' : '🔤 关键词' }}</span>
+            </button>
+          </div>
+          <!-- 前缀 -->
+          <input v-model="prefixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="前缀如: ai-"
+            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+          <!-- 后缀 -->
+          <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="后缀如: -os"
+            class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+        </div>
+
+        <!-- 右侧操作与重置 -->
+        <div class="flex items-center gap-2 shrink-0">
+          <button v-if="hasActiveFilter" @click="resetFilters"
+            class="px-2.5 py-1.5 text-xs text-slate-400 hover:text-white bg-slate-800 hover:bg-slate-700 rounded-lg border border-slate-700 transition flex items-center gap-1">
+            <span>↺</span> 重置
+          </button>
         </div>
       </div>
 
@@ -1070,32 +1037,38 @@
       </div>
     </section>
 
-    <!-- 模态框 1：新建并分发集群扫描任务 (Nezha Dispatcher - 自由定义位数与规则) -->
+    <!-- 模态框 1：新建并分发集群任务 (全量穷举 / 定向模板 / 存量复验) -->
     <div v-if="openDispatchModal"
       class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
       <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
         <!-- 固定顶部标题栏 -->
         <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
           <h3 class="text-base font-bold text-white flex items-center gap-2">
-            <span>🚀</span> 新建并分发集群扫描任务
+            <span>🚀</span> 新建并分发集群任务
           </h3>
           <button @click="openDispatchModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
         </div>
 
         <!-- 内部独立滚动区域 -->
         <div class="overflow-y-auto p-4 space-y-3.5 text-xs flex-1">
-          <!-- 模式切换：全量穷举 vs 定向模板选号 -->
+          <!-- 模式切换：全量穷举 vs 定向模板选号 vs 存量资产复验 -->
           <div class="flex items-center p-1 bg-slate-950/80 rounded-xl border border-slate-800">
             <button type="button" @click="dispatchForm.mode_type = 'standard'"
-              :class="dispatchForm.mode_type !== 'template' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
-              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+              :class="dispatchForm.mode_type === 'standard' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer">
               <span>📊</span> 常规全量穷举
             </button>
             <button type="button" @click="dispatchForm.mode_type = 'template'"
               :class="dispatchForm.mode_type === 'template' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
-              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1.5 cursor-pointer">
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer">
               <span>🎯</span> 定向模板选号
               <span class="text-[10px] bg-emerald-500/30 text-emerald-300 px-1.5 py-0.2 rounded-full border border-emerald-400/30 font-mono">秒级狙击</span>
+            </button>
+            <button type="button" @click="dispatchForm.mode_type = 'recheck'"
+              :class="dispatchForm.mode_type === 'recheck' ? 'bg-indigo-600 text-white font-bold shadow-md shadow-indigo-600/30' : 'text-slate-400 hover:text-slate-200'"
+              class="flex-1 py-1.5 rounded-lg text-xs transition flex items-center justify-center gap-1 cursor-pointer">
+              <span>🔄</span> 存量资产复验
+              <span v-if="batchRecheckState.is_running" class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse ml-0.5"></span>
             </button>
           </div>
 
@@ -1228,7 +1201,7 @@
           </template>
 
           <!-- B. 常规全量穷举视图 -->
-          <template v-else>
+          <template v-else-if="dispatchForm.mode_type === 'standard'">
             <!-- 自定义位数 (3~6 位) -->
             <div>
               <label class="block text-slate-300 font-medium mb-1.5">1. 基础字符位数 (3 ~ 6 位):</label>
@@ -1387,7 +1360,58 @@
                 </label>
               </div>
             </div>
-          </div>
+          </template>
+
+          <!-- C. 存量资产权威复验视图 -->
+          <template v-else-if="dispatchForm.mode_type === 'recheck'">
+            <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800/80">
+              <div class="flex items-center justify-between">
+                <label class="block text-slate-300 font-medium text-xs flex items-center gap-1">
+                  <span>🔄</span> 选择复验资产模式 / 范围:
+                </label>
+                <span class="text-[11px] text-indigo-400 font-mono">
+                  待验存量: <b>{{ selectedRecheckCount.toLocaleString() }}</b> 个
+                </span>
+              </div>
+
+              <!-- 模式选择下拉框 -->
+              <select v-model="batchRecheckScope" :disabled="batchRecheckState.is_running"
+                class="w-full bg-slate-900 border border-slate-700/80 rounded-lg px-3 py-2 text-white text-xs focus:outline-none focus:border-indigo-500 font-mono">
+                <option value="all">📦 全部模式的所有存量可用资产 ({{ (stats?.total_available || 0).toLocaleString() }} 个)</option>
+                <option v-for="item in modeStatsList" :key="item.mode" :value="item.mode">
+                  🎯 仅复验模式: {{ item.mode }} ({{ item.count.toLocaleString() }} 个可用)
+                </option>
+              </select>
+
+              <div class="text-[11px] text-slate-400 leading-relaxed bg-slate-900/50 p-2.5 rounded-lg border border-slate-800">
+                ⚡ <b>权威复核机制</b>：针对数据库中已标记为 <b class="text-emerald-400">可用 (available)</b> 的存量域名，穿透 Verisign RDAP 官方接口极速验活。若已被抢注，自动转为 <b class="text-rose-400">已失效 (registered)</b>；绝不漏扫、不影响您的星标收藏。
+              </div>
+
+              <!-- 实时复验进度卡片 (若正在运行或已有复验数据) -->
+              <div v-if="batchRecheckState.is_running || batchRecheckState.total > 0"
+                class="bg-slate-900/90 p-3 rounded-xl border border-slate-800 space-y-2">
+                <div class="flex items-center justify-between text-xs">
+                  <span class="text-slate-300 font-medium flex items-center gap-1">
+                    <span v-if="batchRecheckState.is_running" class="animate-spin inline-block text-indigo-400">⏳</span>
+                    <span>{{ batchRecheckState.is_running ? '正在权威复验中...' : '上次复验完成' }}</span>
+                  </span>
+                  <span class="font-mono text-indigo-400 font-bold">
+                    {{ batchRecheckState.checked }} / {{ batchRecheckState.total }}
+                    ({{ batchRecheckState.total ? Math.round((batchRecheckState.checked / batchRecheckState.total) * 100) : 0 }}%)
+                  </span>
+                </div>
+                <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
+                  <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full transition-all duration-300"
+                    :style="{ width: (batchRecheckState.total ? ((batchRecheckState.checked / batchRecheckState.total) * 100) : 0) + '%' }"></div>
+                </div>
+                <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-800/80">
+                  <span class="text-emerald-400">✅ 仍可注册: <b>{{ batchRecheckState.still_available }}</b></span>
+                  <span class="text-rose-400">🚫 已被抢注: <b>{{ batchRecheckState.taken }}</b></span>
+                  <span class="text-slate-400 font-mono text-[10px] truncate max-w-[150px]">当前: {{ batchRecheckState.current_domain || '-' }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
 
           <!-- 节点勾选列表 (严格区分在线与离线节点) -->
           <div>
@@ -1446,10 +1470,26 @@
         <div class="flex items-center justify-end gap-3 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
           <button @click="openDispatchModal = false"
             class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">取消</button>
-          <button @click="submitDispatch" :disabled="dispatching || !canDispatch"
-            class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition">
-            {{ dispatching ? '正在下发任务...' : '立即分发开跑 🚀' }}
-          </button>
+
+          <!-- 复验模式下的操作按钮 -->
+          <template v-if="dispatchForm.mode_type === 'recheck'">
+            <button v-if="batchRecheckState.is_running" @click="stopBatchRecheck"
+              class="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl shadow-lg transition">
+              中止复验 ⏹️
+            </button>
+            <button v-else @click="startRecheckDispatch" :disabled="selectedNodeList.length === 0"
+              class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition">
+              开始分发复验 🚀
+            </button>
+          </template>
+
+          <!-- 常规与模板模式下的操作按钮 -->
+          <template v-else>
+            <button @click="submitDispatch" :disabled="dispatching || !canDispatch"
+              class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-lg shadow-indigo-600/30 transition">
+              {{ dispatching ? '正在下发任务...' : '立即分发开跑 🚀' }}
+            </button>
+          </template>
         </div>
       </div>
     </div>
@@ -1593,76 +1633,7 @@
 
 
 
-    <!-- 模态框 4：存量资产权威批量复验 -->
-    <div v-if="openBatchRecheckModal"
-      @click.self="openBatchRecheckModal = false"
-      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto">
-      <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg max-h-[88vh] flex flex-col shadow-2xl my-auto overflow-hidden">
-        <div class="flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
-          <h3 class="text-base font-bold text-white flex items-center gap-2">
-            <span>🔄</span> 存量可用资产批量权威复验
-          </h3>
-          <button @click="openBatchRecheckModal = false" class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="关闭 (Esc)">✕</button>
-        </div>
 
-        <div class="overflow-y-auto p-4 space-y-4 text-xs flex-1">
-          <div class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2">
-            <div class="text-slate-300 font-medium">复验模式与范围:</div>
-            <div class="text-slate-400 text-[11px] leading-relaxed">
-              针对数据库中已标记为 <b class="text-emerald-400">可用 (available)</b> 的存量域名，直接通过 Verisign 官方 RDAP 接口执行实时复查。若已被抢注，系统将自动将其状态变更为 <b class="text-rose-400">已失效 (registered)</b>，绝不会漏扫或影响您的星标收藏。
-            </div>
-            <div class="pt-2">
-              <label class="block text-slate-400 mb-1">选择复验模式分类:</label>
-              <select v-model="batchRecheckScope" :disabled="batchRecheckState.is_running"
-                class="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white text-xs">
-                <option value="all">全部模式的所有存量可用域名</option>
-                <option v-for="(cnt, m) in stats?.mode_stats" :key="m" :value="m">
-                  仅复验模式: {{ m }} ({{ cnt }} 个可用)
-                </option>
-              </select>
-            </div>
-          </div>
-
-          <!-- 进度展示 -->
-          <div v-if="batchRecheckState.is_running || batchRecheckState.total > 0"
-            class="bg-slate-950 p-3.5 rounded-xl border border-slate-800 space-y-2.5">
-            <div class="flex items-center justify-between text-xs">
-              <span class="text-slate-400">复验进度:</span>
-              <span class="font-mono text-indigo-400 font-bold">
-                {{ batchRecheckState.checked }} / {{ batchRecheckState.total }}
-                ({{ batchRecheckState.total ? Math.round((batchRecheckState.checked / batchRecheckState.total) * 100) : 0 }}%)
-              </span>
-            </div>
-            <div class="w-full bg-slate-800 h-2 rounded-full overflow-hidden">
-              <div class="bg-gradient-to-r from-indigo-500 to-emerald-500 h-full transition-all duration-300"
-                :style="{ width: (batchRecheckState.total ? ((batchRecheckState.checked / batchRecheckState.total) * 100) : 0) + '%' }"></div>
-            </div>
-            <div class="flex items-center justify-between text-[11px] pt-1 border-t border-slate-900">
-              <span class="text-emerald-400">✅ 仍可注册: <b>{{ batchRecheckState.still_available }}</b></span>
-              <span class="text-rose-400">🚫 已被抢注: <b>{{ batchRecheckState.taken }}</b></span>
-              <span class="text-slate-500 font-mono text-[10px] truncate max-w-[150px]">当前: {{ batchRecheckState.current_domain || '-' }}</span>
-            </div>
-          </div>
-
-          <div class="text-[11px] text-amber-400/90 bg-amber-950/20 p-2.5 rounded-lg border border-amber-800/40">
-            ⚡ 说明：批量复验直接由 Hub 调度 6 组并发线程直连 Verisign 权威接口，无需依赖 Agent 节点。执行期间请勿频繁刷新。
-          </div>
-        </div>
-
-        <div class="flex items-center justify-end gap-3 p-4 border-t border-slate-800 shrink-0 bg-slate-900">
-          <button @click="openBatchRecheckModal = false"
-            class="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-medium rounded-xl transition">关闭</button>
-          <button v-if="batchRecheckState.is_running" @click="stopBatchRecheck"
-            class="px-5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold rounded-xl shadow-lg transition">
-            中止复验 ⏹️
-          </button>
-          <button v-else @click="startBatchRecheck"
-            class="px-5 py-2 bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-500 hover:to-violet-500 text-white text-xs font-semibold rounded-xl shadow-lg transition">
-            开始批量权威复验 🚀
-          </button>
-        </div>
-      </div>
-    </div>
 
     <!-- 模态框 4：单域名权威深度即验 (形态 A 浮层面板) -->
     <div v-if="showInspectorModal"
@@ -2081,6 +2052,11 @@
           return '';
         });
 
+        const selectAllAssets = () => {
+          onlyStarred.value = false;
+          clearModeFilter();
+        };
+
         const clearModeFilter = () => {
           filterLengths.value = [];
           filterLetter.value = false;
@@ -2463,6 +2439,9 @@
         const canDispatch = computed(() => {
           const hasSelected = selectedNodeList.value.length > 0;
           const allOnline = selectedNodeList.value.every(id => onlineNodes.value.some(n => n.node_id === id));
+          if (dispatchForm.value.mode_type === 'recheck') {
+            return hasSelected && allOnline && !batchRecheckState.value.is_running;
+          }
           if (dispatchForm.value.mode_type === 'template') {
             return Boolean(templateMeta.value.valid) && hasSelected && allOnline;
           }
@@ -2887,6 +2866,40 @@
           } catch (e) { }
         };
 
+        const selectedRecheckCount = computed(() => {
+          if (!batchRecheckScope.value || batchRecheckScope.value === 'all') {
+            return stats.value?.total_available || 0;
+          }
+          return stats.value?.mode_stats?.[batchRecheckScope.value] || 0;
+        });
+
+        const startRecheckDispatch = async () => {
+          if (selectedNodeList.value.length === 0) {
+            showToast('必须至少勾选一个在线 Agent 节点来分配复验任务');
+            return;
+          }
+          try {
+            const res = await fetch('/api/domain/batch_recheck', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                mode: batchRecheckScope.value,
+                nodes: selectedNodeList.value
+              })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+              showToast(data.msg || '已成功启动集群存量复验');
+              fetchBatchRecheckStatus();
+              openDispatchModal.value = false;
+            } else {
+              showToast(data.msg || '启动复验失败');
+            }
+          } catch (e) {
+            showToast('下发复验任务网络请求异常');
+          }
+        };
+
         const startBatchRecheck = async () => {
           if (!confirm('确定开始对所选范围的存量可用资产执行 Verisign 权威 RDAP 批量复验吗？')) return;
           try {
@@ -3052,7 +3065,7 @@
           setInterval(() => {
             fetchStats();
             fetchNodes();
-            if (openBatchRecheckModal.value || batchRecheckState.value.is_running) {
+            if (openDispatchModal.value || batchRecheckState.value.is_running) {
               fetchBatchRecheckStatus();
             }
           }, 2500);
@@ -3068,7 +3081,7 @@
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,
           filterPattern, patternOptions, patternFamilyOptions, isPronounceable,
           hasActiveFilter, activeFilterSummary, resetFilters, selectModeFromStats,
-          activeModeFilter, clearModeFilter, formatCompactNumber, modeStatsList,
+          selectAllAssets, activeModeFilter, clearModeFilter, formatCompactNumber, modeStatsList,
           openDispatchModal, dispatching, dispatchForm, selectedNodeList,
           selectAllFilterRules, resetFilterRules,
           onlineNodes, offlineNodes, runningNodesCount, idleNodesCount, scrollToAgentNodes,
@@ -3080,8 +3093,8 @@
           submitDispatch, stopClusterTask, deleteNode, activeTaskList,
           formatNodeMode, formatTaskTitle,
           openTokenModal,
-          openBatchRecheckModal, batchRecheckScope, batchRecheckState,
-          startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
+          batchRecheckScope, batchRecheckState, selectedRecheckCount,
+          startRecheckDispatch, startBatchRecheck, stopBatchRecheck, fetchBatchRecheckStatus,
           copyText, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           refreshAll,
           showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef,
