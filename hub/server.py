@@ -3121,6 +3121,38 @@ class HubHandler(BaseHTTPRequestHandler):
             self.send_json({"code": 0, "msg": "本地状态已同步为已注册", "domain": target_domain})
             return
 
+        # 7.3 永久删除指定域名资产 (支持单条或整页批量删除)
+        if path == "/api/domain/delete":
+            data = self.read_json_body()
+            domains_to_del = []
+            if "domains" in data and isinstance(data["domains"], list):
+                domains_to_del = [str(d).strip().lower() for d in data["domains"] if str(d).strip()]
+            elif "domain" in data and str(data["domain"]).strip():
+                domains_to_del = [str(data["domain"]).strip().lower()]
+
+            if not domains_to_del:
+                self.send_json({"code": 1, "msg": "未指定要删除的域名"}, 400)
+                return
+
+            # 去重并做批次上限防护 (单次最多支持 1000 个)
+            domains_to_del = list(dict.fromkeys(domains_to_del))[:1000]
+
+            with DB_LOCK:
+                with get_db() as conn:
+                    placeholders = ",".join("?" for _ in domains_to_del)
+                    cur = conn.cursor()
+                    cur.execute(f"DELETE FROM domains WHERE domain IN ({placeholders});", domains_to_del)
+                    del_count = cur.rowcount
+                    conn.commit()
+
+            self.send_json({
+                "code": 0,
+                "msg": f"成功删除 {del_count} 个域名资产",
+                "deleted_count": del_count,
+                "domains": domains_to_del
+            })
+            return
+
         self.send_error(404, "Endpoint Not Found")
 
 def run(port=8088):

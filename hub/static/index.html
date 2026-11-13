@@ -379,16 +379,19 @@
     /* ========================================================= */
     /* 域名即验浮层 (Inspector Modal) 浅色/深色自适应精细化适配   */
     /* ========================================================= */
-    html:not(.dark) .inspector-modal-card {
+    html:not(.dark) .inspector-modal-card,
+    html:not(.dark) .delete-modal-card {
       background-color: #ffffff !important;
       border-color: #e2e8f0 !important;
       box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15) !important;
     }
-    html:not(.dark) .inspector-modal-header {
+    html:not(.dark) .inspector-modal-header,
+    html:not(.dark) .delete-modal-header {
       background-color: #ffffff !important;
       border-color: #f1f5f9 !important;
     }
-    html:not(.dark) .inspector-modal-footer {
+    html:not(.dark) .inspector-modal-footer,
+    html:not(.dark) .delete-modal-footer {
       background-color: #f8fafc !important;
       border-color: #f1f5f9 !important;
     }
@@ -599,14 +602,13 @@
           :title="isDark ? '点击切换为浅色明亮模式' : '点击切换为深色沉浸模式'">
           <span>{{ isDark ? '☀️ 浅色' : '🌙 深色' }}</span>
         </button>
-        <!-- GitHub 仓库直达 -->
+        <!-- GitHub 仓库直达 (仅保留图标) -->
         <a href="https://github.com/songmuling/domain_scanner" target="_blank" rel="noopener noreferrer"
-          class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium rounded-lg border border-slate-700 transition flex items-center gap-1.5"
+          class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 transition flex items-center justify-center shrink-0"
           title="访问 GitHub 开源仓库: https://github.com/songmuling/domain_scanner">
           <svg class="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24" aria-hidden="true">
             <path fill-rule="evenodd" clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/>
           </svg>
-          <span>GitHub</span>
         </a>
       </div>
     </header>
@@ -964,19 +966,27 @@
 
       <!-- 域名列表展示区 (紧凑自适应多列网格) -->
       <div class="space-y-2.5">
-        <!-- 列表头部工具栏：统计与一键复制当前页 -->
+        <!-- 列表头部工具栏：统计与一键复制当前页、整页删除 -->
         <div class="flex items-center justify-between text-xs text-slate-400 px-1">
           <div class="flex items-center gap-2">
             <span>共 <b class="text-white">{{ totalDomains.toLocaleString() }}</b> 个可用资产</span>
             <span class="text-slate-600">·</span>
             <span>第 <b class="text-slate-200">{{ page }}</b> / {{ totalPages }} 页</span>
           </div>
-          <button @click="copyAllCurrentPageDomains" :disabled="domainList.length === 0"
-            class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 hover:text-white rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer text-xs font-medium shadow-sm"
-            :title="'复制本页全部 ' + domainList.length + ' 个域名到剪贴板 (每行一个)'">
-            <span>📋</span>
-            <span>复制本页域名 ({{ domainList.length }})</span>
-          </button>
+          <div class="flex items-center gap-2">
+            <button @click="copyAllCurrentPageDomains" :disabled="domainList.length === 0"
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 hover:text-white rounded-lg border border-slate-700 transition flex items-center gap-1.5 cursor-pointer text-xs font-medium shadow-sm"
+              :title="'复制本页全部 ' + domainList.length + ' 个域名到剪贴板 (每行一个)'">
+              <span>📋</span>
+              <span>复制本页 ({{ domainList.length }})</span>
+            </button>
+            <button @click="confirmDeletePage" :disabled="domainList.length === 0 || isDeleting"
+              class="px-2.5 py-1 bg-rose-950/40 hover:bg-rose-900/60 disabled:opacity-40 text-rose-300 hover:text-white rounded-lg border border-rose-800/50 hover:border-rose-600 transition flex items-center gap-1.5 cursor-pointer text-xs font-medium shadow-sm"
+              :title="'永久删除当前页全部 ' + domainList.length + ' 个域名资产 (需二次确认)'">
+              <span>🗑️</span>
+              <span>删除本页</span>
+            </button>
+          </div>
         </div>
 
         <!-- 紧凑域名卡片网格 (移动端2列，平板3~4列，桌面端统一5列整齐排布) -->
@@ -995,7 +1005,7 @@
                 :title="item.reason || '已被抢注'">已失效</span>
             </div>
 
-            <!-- 右侧：权威即验与收藏操作 -->
+            <!-- 右侧：权威即验、收藏与删除操作 -->
             <div class="flex items-center gap-1 shrink-0">
               <button @click="inspectDomainFromList(item.domain)" title="单域名权威深度即验 (弹窗查看注册人/到期日/购买直达)"
                 class="p-1 text-slate-500 hover:text-indigo-400 rounded hover:bg-slate-800 transition">
@@ -1005,6 +1015,10 @@
                 class="p-1 text-slate-500 hover:text-amber-400 rounded hover:bg-slate-800 transition text-xs"
                 :class="item.is_starred ? 'text-amber-400' : ''">
                 {{ item.is_starred ? '⭐' : '☆' }}
+              </button>
+              <button @click="confirmDeleteSingle(item.domain)" title="永久删除此域名 (需二次确认)"
+                class="p-1 text-slate-500 hover:text-rose-400 rounded hover:bg-rose-950/40 transition text-xs">
+                <span>🗑️</span>
               </button>
             </div>
           </div>
@@ -1909,6 +1923,74 @@
       </div>
     </div>
 
+    <!-- 模态框 4：删除域名二次确认弹窗 (防误触保护) -->
+    <div v-if="showDeleteModal"
+      class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 overflow-y-auto animate-fade-in"
+      @click.self="if (!isDeleting) showDeleteModal = false">
+      <div class="delete-modal-card bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md shadow-2xl flex flex-col my-auto overflow-hidden animate-scale-up">
+        <!-- 头部 -->
+        <div class="delete-modal-header flex items-center justify-between border-b border-slate-800 p-4 shrink-0 bg-slate-900">
+          <h3 class="text-base font-bold text-rose-400 flex items-center gap-2">
+            <span>⚠️</span> 确认删除域名资产
+          </h3>
+          <button v-if="!isDeleting" @click="showDeleteModal = false"
+            class="text-slate-400 hover:text-white hover:bg-slate-800 px-2.5 py-1 rounded-lg transition text-sm" title="取消 (Esc)">✕</button>
+        </div>
+
+        <!-- 内容主体 -->
+        <div class="p-5 space-y-4 text-xs">
+          <!-- 单条删除提示 -->
+          <div v-if="deleteModalData.type === 'single'" class="space-y-3">
+            <p class="text-slate-300 text-sm">
+              确定要从本地数据库中永久删除以下域名吗？
+            </p>
+            <div class="p-3 bg-rose-950/30 border border-rose-900/50 rounded-xl text-center">
+              <span class="font-mono font-bold text-base text-rose-300 tracking-wide select-all">
+                {{ deleteModalData.domain }}
+              </span>
+            </div>
+            <p class="text-slate-400 leading-relaxed">
+              ⚠️ <span class="text-rose-400 font-semibold">此操作不可撤销！</span>
+              删除后该域名记录和全文检索索引将一并从本地库中彻底抹除。
+            </p>
+          </div>
+
+          <!-- 整页删除提示 -->
+          <div v-else class="space-y-3">
+            <p class="text-slate-300 text-sm">
+              确定要彻底删除当前页的全部 <b class="text-rose-400 text-base font-mono">{{ deleteModalData.count }}</b> 个域名资产吗？
+            </p>
+            <div class="p-3 bg-rose-950/30 border border-rose-900/50 rounded-xl max-h-36 overflow-y-auto space-y-1">
+              <div class="text-[11px] text-slate-400 flex flex-wrap gap-1.5">
+                <span v-for="d in deleteModalData.domains" :key="d"
+                  class="font-mono px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-slate-300 text-[11px]">
+                  {{ d }}
+                </span>
+              </div>
+            </div>
+            <p class="text-slate-400 leading-relaxed">
+              🚨 <span class="text-rose-400 font-semibold">极度危险警告：此批量操作不可恢复！</span>
+              当前展示页的所有 {{ deleteModalData.count }} 个域名将从数据库及全文索引中批量彻底永久删除。
+            </p>
+          </div>
+        </div>
+
+        <!-- 底部按钮操作栏 -->
+        <div class="delete-modal-footer flex items-center justify-end gap-2.5 p-4 border-t border-slate-800 bg-slate-900/60">
+          <button @click="showDeleteModal = false" :disabled="isDeleting"
+            class="px-4 py-2 rounded-xl text-xs font-medium text-slate-400 hover:text-white hover:bg-slate-800 border border-slate-700/60 transition disabled:opacity-50">
+            取消
+          </button>
+          <button @click="executeDelete" :disabled="isDeleting"
+            class="px-4 py-2 rounded-xl text-xs font-bold text-white bg-gradient-to-r from-rose-600 to-red-600 hover:from-rose-500 hover:to-red-500 border border-rose-500/50 shadow-lg shadow-rose-900/30 transition flex items-center gap-1.5 disabled:opacity-50">
+            <span v-if="isDeleting" class="animate-spin">⏳</span>
+            <span v-else>🗑️</span>
+            <span>{{ isDeleting ? '正在删除...' : (deleteModalData.type === 'single' ? '确认彻底删除' : '确认删除整页 ' + deleteModalData.count + ' 个域名') }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
     <!-- Toast -->
     <div v-if="toastMsg"
       class="fixed bottom-6 right-6 z-50 bg-slate-800 text-white px-4 py-2.5 rounded-xl border border-slate-700 shadow-2xl text-xs font-medium flex items-center gap-2">
@@ -1957,6 +2039,11 @@
         const totalDomains = ref(0);
         const page = ref(1);
         const limit = ref(50);
+
+        // 删除相关状态 (防误触二次确认)
+        const showDeleteModal = ref(false);
+        const deleteModalData = ref({ type: 'single', domain: '', count: 1, domains: [] });
+        const isDeleting = ref(false);
 
         const onlyStarred = ref(false);
         const toggleOnlyStarred = () => {
@@ -2612,6 +2699,60 @@
           });
         };
 
+        const confirmDeleteSingle = (domain) => {
+          if (!domain) return;
+          deleteModalData.value = {
+            type: 'single',
+            domain: domain,
+            count: 1,
+            domains: [domain]
+          };
+          showDeleteModal.value = true;
+        };
+
+        const confirmDeletePage = () => {
+          if (!domainList.value || domainList.value.length === 0) {
+            showToast('当前页暂无域名可删除');
+            return;
+          }
+          const domains = domainList.value.map(d => d.domain);
+          deleteModalData.value = {
+            type: 'page',
+            domain: '',
+            count: domains.length,
+            domains: domains
+          };
+          showDeleteModal.value = true;
+        };
+
+        const executeDelete = async () => {
+          if (!deleteModalData.value.domains || deleteModalData.value.domains.length === 0) return;
+          isDeleting.value = true;
+          try {
+            const res = await fetch('/api/domain/delete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ domains: deleteModalData.value.domains })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+              showToast(data.msg || '删除成功');
+              showDeleteModal.value = false;
+              fetchStats();
+              if ((page.value - 1) * limit.value >= (totalDomains.value - deleteModalData.value.domains.length) && page.value > 1) {
+                page.value = Math.max(1, page.value - 1);
+              }
+              fetchDomains();
+            } else {
+              showToast(data.msg || '删除失败');
+            }
+          } catch (e) {
+            showToast('删除请求发生异常: ' + e.message);
+          } finally {
+            isDeleting.value = false;
+          }
+        };
+
         const copyDockerRunCmd = () => {
           copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -v $(pwd):/app -w /app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" python:3.12-alpine python agent.py`);
         };
@@ -3152,6 +3293,7 @@
 
         const handleKeyDown = (e) => {
           if (e.key === 'Escape') {
+            if (!isDeleting.value) showDeleteModal.value = false;
             openDispatchModal.value = false;
             openTokenModal.value = false;
             openBatchRecheckModal.value = false;
@@ -3199,7 +3341,8 @@
           copyText, copyAllCurrentPageDomains, formatTime, formatIdle, getPercent, fetchDomains, toggleStar, recheckDomain,
           refreshAll,
           showInspectorModal, inspectorDomainInput, inspecting, inspectResult, inspectorInputRef, inspectDomainFromList,
-          openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarTarget, syncRegisteredTarget, tldFilter
+          openInspectorModal, closeInspectorModal, runDomainInspect, toggleStarTarget, syncRegisteredTarget, tldFilter,
+          showDeleteModal, deleteModalData, isDeleting, confirmDeleteSingle, confirmDeletePage, executeDelete
         };
       }
     }).mount('#app');
