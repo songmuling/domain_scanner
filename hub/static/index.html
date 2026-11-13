@@ -211,8 +211,10 @@
       color: #059669 !important;
     }
 
-    html:not(.dark) .text-rose-400 {
-      color: #e11d48 !important;
+    html:not(.dark) .text-rose-400,
+    html:not(.dark) .text-rose-300,
+    html:not(.dark) .text-rose-200 {
+      color: #be123c !important;
     }
 
     html:not(.dark) .text-amber-400,
@@ -253,10 +255,14 @@
       border-color: #a7f3d0 !important;
     }
 
+    html:not(.dark) .bg-rose-950\/80,
+    html:not(.dark) .bg-rose-950\/70,
     html:not(.dark) .bg-rose-950\/60,
+    html:not(.dark) .bg-rose-950\/50,
     html:not(.dark) .bg-rose-950\/40,
+    html:not(.dark) .bg-rose-950\/30,
     html:not(.dark) .bg-rose-950\/20 {
-      background-color: #ffe4e6 !important;
+      background-color: #fff1f2 !important;
       border-color: #fecdd3 !important;
     }
 
@@ -394,6 +400,19 @@
     html:not(.dark) .delete-modal-footer {
       background-color: #f8fafc !important;
       border-color: #f1f5f9 !important;
+    }
+    /* 删除确认弹窗 (Delete Modal) 浅色模式专属高对比度样式 (告别浅色看不清) */
+    html:not(.dark) .delete-domain-box {
+      background-color: #fff1f2 !important; /* rose-50 柔和浅红背景 */
+      border-color: #fecdd3 !important;     /* rose-200 边框 */
+    }
+    html:not(.dark) .delete-domain-text {
+      color: #be123c !important;             /* rose-700 极醒目正红粗体 (WCAG AAA 超高对比度) */
+    }
+    html:not(.dark) .delete-domain-pill {
+      background-color: #ffffff !important;
+      border-color: #fecdd3 !important;
+      color: #be123c !important;
     }
     html:not(.dark) .inspector-input-box {
       background-color: #f8fafc !important;
@@ -1941,11 +1960,11 @@
         <div class="p-5 space-y-4 text-xs">
           <!-- 单条删除提示 -->
           <div v-if="deleteModalData.type === 'single'" class="space-y-3">
-            <p class="text-slate-300 text-sm">
+            <p class="text-slate-300 text-sm font-medium">
               确定要从本地数据库中永久删除以下域名吗？
             </p>
-            <div class="p-3 bg-rose-950/30 border border-rose-900/50 rounded-xl text-center">
-              <span class="font-mono font-bold text-base text-rose-300 tracking-wide select-all">
+            <div class="delete-domain-box p-3.5 bg-rose-950/30 border border-rose-900/50 rounded-xl text-center shadow-inner">
+              <span class="delete-domain-text font-mono font-bold text-lg text-rose-300 tracking-wide select-all inline-block">
                 {{ deleteModalData.domain }}
               </span>
             </div>
@@ -1957,13 +1976,13 @@
 
           <!-- 整页删除提示 -->
           <div v-else class="space-y-3">
-            <p class="text-slate-300 text-sm">
+            <p class="text-slate-300 text-sm font-medium">
               确定要彻底删除当前页的全部 <b class="text-rose-400 text-base font-mono">{{ deleteModalData.count }}</b> 个域名资产吗？
             </p>
-            <div class="p-3 bg-rose-950/30 border border-rose-900/50 rounded-xl max-h-36 overflow-y-auto space-y-1">
-              <div class="text-[11px] text-slate-400 flex flex-wrap gap-1.5">
+            <div class="delete-domain-box p-3 bg-rose-950/30 border border-rose-900/50 rounded-xl max-h-40 overflow-y-auto space-y-1 shadow-inner">
+              <div class="flex flex-wrap gap-1.5">
                 <span v-for="d in deleteModalData.domains" :key="d"
-                  class="font-mono px-1.5 py-0.5 rounded bg-slate-800/80 border border-slate-700/60 text-slate-300 text-[11px]">
+                  class="delete-domain-pill font-mono px-2 py-0.5 rounded-md bg-slate-800/80 border border-slate-700/60 text-rose-300 text-xs font-semibold">
                   {{ d }}
                 </span>
               </div>
