@@ -261,9 +261,11 @@
     html:not(.dark) .bg-rose-950\/50,
     html:not(.dark) .bg-rose-950\/40,
     html:not(.dark) .bg-rose-950\/30,
-    html:not(.dark) .bg-rose-950\/20 {
+    html:not(.dark) .bg-rose-950\/20,
+    html:not(.dark) .bg-rose-900\/60 {
       background-color: #fff1f2 !important;
       border-color: #fecdd3 !important;
+      color: #be123c !important;
     }
 
     html:not(.dark) .bg-amber-950\/80,
@@ -972,6 +974,37 @@
           <!-- 后缀 -->
           <input v-model="suffixFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="后缀如: -os"
             class="w-24 bg-slate-900 border border-slate-700/80 rounded-lg px-2.5 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-indigo-500 transition">
+          <!-- 排除字符 -->
+          <div class="relative flex items-center">
+            <input v-model="excludeFilter" @keyup.enter="page = 1; fetchDomains()" placeholder="🚫 排除如: 4 或 4,7"
+              class="w-28 sm:w-32 bg-slate-900 border border-slate-700/80 rounded-lg pl-2.5 pr-6 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-rose-500 transition font-mono"
+              :class="excludeFilter ? 'border-rose-500/70 text-rose-300' : ''"
+              title="排除包含特定字符的域名，支持多个（如输入 4 或 4,7 或 47 或 0,4 或 o,l）">
+            <button v-if="excludeFilter" @click="excludeFilter = ''; page = 1; fetchDomains()"
+              class="absolute right-1.5 text-slate-500 hover:text-slate-300 text-[10px] cursor-pointer"
+              title="清除排除">✕</button>
+          </div>
+          <!-- 常用快捷排除 (无4, 无4/7, 无0/4) -->
+          <div class="flex items-center gap-1 select-none">
+            <button type="button" @click="toggleQuickExclude('4')"
+              :class="excludeFilter === '4' ? 'bg-rose-900/60 border-rose-500/80 text-rose-300 font-bold shadow-sm shadow-rose-900/40' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'"
+              class="px-2 py-1 rounded-lg text-[11px] font-mono border transition cursor-pointer"
+              title="快速排除包含数字 4 的域名 (非4)">
+              无4
+            </button>
+            <button type="button" @click="toggleQuickExclude('4,7')"
+              :class="excludeFilter === '4,7' ? 'bg-rose-900/60 border-rose-500/80 text-rose-300 font-bold shadow-sm shadow-rose-900/40' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'"
+              class="px-2 py-1 rounded-lg text-[11px] font-mono border transition cursor-pointer"
+              title="快速排除包含数字 4 或 7 的域名 (非47)">
+              无4/7
+            </button>
+            <button type="button" @click="toggleQuickExclude('0,4')"
+              :class="excludeFilter === '0,4' ? 'bg-rose-900/60 border-rose-500/80 text-rose-300 font-bold shadow-sm shadow-rose-900/40' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'"
+              class="px-2 py-1 rounded-lg text-[11px] font-mono border transition cursor-pointer"
+              title="快速排除包含数字 0 或 4 的域名 (非04)">
+              无0/4
+            </button>
+          </div>
         </div>
 
         <!-- 右侧操作与重置 -->
@@ -2158,6 +2191,7 @@
             searchKeyword.value ||
             prefixFilter.value ||
             suffixFilter.value ||
+            excludeFilter.value ||
             hasVowel.value ||
             excludeRare.value ||
             (currentMode.value && currentMode.value !== 'all')
@@ -2197,6 +2231,7 @@
           }
           if (prefixFilter.value) parts.push(`前缀:${prefixFilter.value}`);
           if (suffixFilter.value) parts.push(`后缀:${suffixFilter.value}`);
+          if (excludeFilter.value) parts.push(`🚫排除:${excludeFilter.value}`);
           return parts.join(' · ');
         });
 
@@ -2216,6 +2251,7 @@
           searchModeOverride.value = 'auto';
           prefixFilter.value = '';
           suffixFilter.value = '';
+          excludeFilter.value = '';
           tldFilter.value = '';
           hasVowel.value = false;
           excludeRare.value = false;
@@ -2339,8 +2375,19 @@
 
         const prefixFilter = ref('');
         const suffixFilter = ref('');
+        const excludeFilter = ref('');
         const hasVowel = ref(false);
         const excludeRare = ref(false);
+
+        const toggleQuickExclude = (val) => {
+          if (excludeFilter.value === val) {
+            excludeFilter.value = '';
+          } else {
+            excludeFilter.value = val;
+          }
+          page.value = 1;
+          fetchDomains();
+        };
 
         const openDispatchModal = ref(false);
         const dispatching = ref(false);
@@ -2920,6 +2967,7 @@
               search_mode: isSearchTemplateMode.value ? 'template' : (searchModeOverride.value === 'literal' ? 'literal' : 'auto'),
               prefix: prefixFilter.value,
               suffix: suffixFilter.value,
+              exclude_chars: excludeFilter.value.trim(),
               tld: tldFilter.value,
               has_vowel: hasVowel.value ? '1' : '0',
               exclude_rare: excludeRare.value ? '1' : '0'
@@ -3350,7 +3398,7 @@
           loading, toastMsg, stats, nodes, clusterToken, domainList, totalDomains,
           page, limit, totalPages, currentStatus, currentMode, searchKeyword,
           searchModeOverride, isSearchTemplateMode, toggleSearchMode,
-          prefixFilter, suffixFilter, hasVowel, excludeRare, modeOptions,
+          prefixFilter, suffixFilter, excludeFilter, toggleQuickExclude, hasVowel, excludeRare, modeOptions,
           onlyStarred, toggleOnlyStarred, filterLengths, filterLetter, filterDigit, filterHyphen,
           filterRepeat, repeatOptions, filterSeqCount, seqCountOptions, filterSeqDir, seqDirOptions,
           filterPattern, patternOptions, patternFamilyOptions, isPronounceable,

@@ -694,6 +694,15 @@ def matches_filter(domain, filter_config):
     if not clean_name:
         return False
 
+    # 0. 自定义排除特定字符 (如排除 4、排除 4,7、排除 0,4 等)
+    exclude_chars = filter_config.get("exclude_chars")
+    if exclude_chars:
+        ex_str = str(exclude_chars).lower()
+        for d in (',', '，', '、', ' ', '|', '/', ';', '；', '\t', '\n'):
+            ex_str = ex_str.replace(d, '')
+        if any(ch in clean_name.lower() for ch in ex_str):
+            return False
+
     # 1. 纯净度硬过滤 (排除生僻辅音 q, x, z, v, y)
     if filter_config.get("clean_only"):
         if any(ch in RARE_CONSONANTS_SET for ch in clean_name):

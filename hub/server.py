@@ -560,6 +560,34 @@ def sqlite_regexp(pattern, text):
     except Exception:
         return 0
 
+def build_exclude_glob_pattern(exclude_chars: str):
+    """
+    将用户输入的排除字符 (如 '4', '4,7', '47', '0,4', 'o,l', '4,-')
+    转换为高效且安全的 SQLite GLOB 排除规则 (如 '*[4]*', '*[47]*', '*[-4]*')
+    自动过滤非字符符号，并进行字母大小写补全以确保大小写不敏感匹配。
+    """
+    if not exclude_chars:
+        return None
+    s = str(exclude_chars)
+    for d in (',', '，', '、', ' ', '|', '/', ';', '；', '\t', '\n'):
+        s = s.replace(d, '')
+    chars = []
+    seen = set()
+    has_hyphen = False
+    for ch in s:
+        cl = ch.lower()
+        if cl == '-':
+            has_hyphen = True
+        elif cl.isalnum() and cl not in seen:
+            seen.add(cl)
+            chars.append(cl)
+            if cl.isalpha():
+                chars.append(cl.upper())
+    if not chars and not has_hyphen:
+        return None
+    inner = ("-" if has_hyphen else "") + "".join(chars)
+    return f"*[{inner}]*"
+
 def is_template_pattern(s):
     """
     判断用户输入是否应作为定向模板/掩码解析:
@@ -1631,6 +1659,7 @@ def build_domain_filters(params):
     exclude_rare = params.get("exclude_rare", ["0"])[0] == "1"
     prefix = params.get("prefix", [""])[0].strip().lower()
     suffix = params.get("suffix", [""])[0].strip().lower()
+    exclude_chars = params.get("exclude_chars", [""])[0].strip()
 
     where_clauses = []
     bind_params = []
@@ -1745,6 +1774,15 @@ def build_domain_filters(params):
     if tld in ("com", "net"):
         where_clauses.append("domains.domain LIKE ?")
         bind_params.append(f"%.{tld}")
+
+    # 4.5 排除特定字符 (如: 排除 4、排除 4,7、排除 0,4 等，基于前缀 SLD 过滤)
+    raw_exclude_chars = params.get("exclude_chars", [""])[0].strip()
+    if raw_exclude_chars:
+        glob_pat = build_exclude_glob_pattern(raw_exclude_chars)
+        if glob_pat:
+            slug_expr = "CASE WHEN INSTR(domains.domain, '.') > 0 THEN SUBSTR(domains.domain, 1, INSTR(domains.domain, '.') - 1) ELSE domains.domain END"
+            where_clauses.append(f"{slug_expr} NOT GLOB ?")
+            bind_params.append(glob_pat)
 
     # 5. 淘金规则：包含元音 / 剔除生僻声母 (利用预计算索引快速过滤)
     if has_vowel:
@@ -2124,7 +2162,8 @@ class HubHandler(BaseHTTPRequestHandler):
                 params.get("repeat_count", [""])[0].strip() or
                 params.get("seq_count", [""])[0].strip() or
                 params.get("pattern", [""])[0].strip() or
-                params.get("pronounceable", ["0"])[0] in ("1", "true")
+                params.get("pronounceable", ["0"])[0] in ("1", "true") or
+                params.get("exclude_chars", [""])[0].strip()
             )
 
             with _STATS_LOCK:
