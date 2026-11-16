@@ -24,7 +24,7 @@ import signal
 import uuid
 
 # 客户端统一版本号 (每次 git commit 时由 .git/hooks/pre-commit 自动刷新为提交时刻的真实时间戳)
-AGENT_VERSION = "26.1112.1952"
+AGENT_VERSION = "26.1116.0927"
 
 # 引入核心扫描器引擎 (优先同目录 scanner.py，保证 agent 独立自包含)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -527,11 +527,20 @@ def main():
     parser.add_argument("--max-threads", type=int,
                         default=int(os.environ.get("MAX_THREADS") or os.environ.get("SCAN_MAX_THREADS") or 0),
                         help="本地最大并发线程数上限 (安全约束，取 min(Hub下发, max-threads))")
+    parser.add_argument("--idle-interval", type=float,
+                        default=float(os.environ.get("HEARTBEAT_IDLE", 10.0)),
+                        help="空闲状态下的心跳间隔(秒)，默认 10.0秒 (自适应省流)")
+    parser.add_argument("--running-interval", type=float,
+                        default=float(os.environ.get("HEARTBEAT_RUNNING", 2.5)),
+                        help="运行状态下的心跳间隔(秒)，默认 2.5秒")
     args = parser.parse_args()
 
     node_id = args.node.strip() or auto_detect_node_id()
     token = args.token.strip()
     agent_uuid = get_or_create_agent_uuid()
+
+    idle_interval = max(3.0, min(25.0, args.idle_interval))
+    running_interval = max(1.0, min(10.0, args.running_interval))
 
     print(f"==================================================")
     print(f" ⚡ Domain Agent 集群客户端启动中...")
@@ -543,6 +552,7 @@ def main():
         print(f" 本地最大线程上限: {args.max_threads} (min模式生效)")
     else:
         print(f" 本地最大线程上限: 无限制 (完全跟随 Hub 调度)")
+    print(f" 自适应心跳省流: 运行态 {running_interval}s / 空闲态 {idle_interval}s")
     print(f"==================================================")
 
     client = HubClient(args.hub, token, node_id, agent_uuid)
@@ -610,7 +620,13 @@ def main():
                     client.flush_reports(timeout=3.0)
                     current_worker = None
 
-            time.sleep(2.5)
+            # 自适应心跳省流策略：
+            # 1. 扫描进行中 (running)：保持 2.5 秒高频汇报，确保控制台实时算力/进度平滑、援助切片秒级同步
+            # 2. 空闲等待任务中 (idle / completed)：10.0 秒低频自适应休眠，节省约 75% 心跳流量并降低服务端请求
+            if current_worker and current_worker.is_running:
+                time.sleep(running_interval)
+            else:
+                time.sleep(idle_interval)
 
     except KeyboardInterrupt:
         graceful_exit()
