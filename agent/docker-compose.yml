@@ -15,3 +15,8 @@ services:
       - HUB_TOKEN=${HUB_TOKEN:-}
       - NODE_ID=${NODE_ID:-My-Node-Name}
       - MAX_THREADS=${MAX_THREADS:-}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

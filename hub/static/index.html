@@ -1669,6 +1669,11 @@
                 <div class="pl-6">- HUB_URL=${HUB_URL:-http://192.168.200.12:8088}</div>
                 <div class="pl-6">- HUB_TOKEN=${HUB_TOKEN:-{{ clusterToken }}}</div>
                 <div class="pl-6">- NODE_ID=${NODE_ID:-My-Node-Name}</div>
+                <div class="pl-4">logging:</div>
+                <div class="pl-6">driver: "json-file"</div>
+                <div class="pl-6">options:</div>
+                <div class="pl-8">max-size: "10m"</div>
+                <div class="pl-8">max-file: "3"</div>
                 <button @click="copyComposeYaml"
                   class="absolute top-2 right-2 text-xs bg-slate-800 px-2 py-1 rounded text-slate-300 hover:text-white border border-slate-700">
                   一键复制
@@ -2832,11 +2837,11 @@
         };
 
         const copyDockerRunCmd = () => {
-          copyText(`docker run -d --restart unless-stopped --name domain-agent --network host -v $(pwd):/app -w /app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" python:3.12-alpine python agent.py`);
+          copyText(`docker run -d --restart unless-stopped --name domain-agent --network host --log-opt max-size=10m --log-opt max-file=3 -v $(pwd):/app -w /app -e PYTHONUNBUFFERED=1 -e HUB_URL="http://192.168.200.12:8088" -e HUB_TOKEN="${clusterToken.value}" -e NODE_ID="My-Node-Name" python:3.12-alpine python agent.py`);
         };
 
         const copyComposeYaml = () => {
-          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: python:3.12-alpine\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    working_dir: /app\n    volumes:\n      - ./:/app\n    command: python agent.py\n    environment:\n      - TZ=Asia/Shanghai\n      - PYTHONUNBUFFERED=1\n      - HUB_URL=\${HUB_URL:-http://192.168.200.12:8088}\n      - HUB_TOKEN=\${HUB_TOKEN:-${clusterToken.value}}\n      - NODE_ID=\${NODE_ID:-My-Node-Name}\n`);
+          copyText(`version: '3.8'\nservices:\n  domain-agent:\n    image: python:3.12-alpine\n    container_name: domain-agent\n    restart: unless-stopped\n    network_mode: host\n    working_dir: /app\n    volumes:\n      - ./:/app\n    command: python agent.py\n    environment:\n      - TZ=Asia/Shanghai\n      - PYTHONUNBUFFERED=1\n      - HUB_URL=\${HUB_URL:-http://192.168.200.12:8088}\n      - HUB_TOKEN=\${HUB_TOKEN:-${clusterToken.value}}\n      - NODE_ID=\${NODE_ID:-My-Node-Name}\n    logging:\n      driver: "json-file"\n      options:\n        max-size: "10m"\n        max-file: "3"\n`);
         };
 
         const copyPythonCmd = () => {

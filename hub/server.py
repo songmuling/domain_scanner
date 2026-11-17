@@ -1901,8 +1901,26 @@ class HubHandler(BaseHTTPRequestHandler):
     server_version = "DomainHub-Master/2.0"
 
     def log_message(self, format, *args):
-        if self.path.startswith("/api/agent/heartbeat"):
-            return
+        # 提取 HTTP 状态码
+        code_str = ""
+        if len(args) >= 2 and str(args[1]).isdigit():
+            code_str = str(args[1])
+
+        # 高频只读轮询接口在 2xx/3xx 成功态下静默放行，杜绝日常定时拉取刷屏
+        if not code_str or code_str.startswith("2") or code_str.startswith("3"):
+            clean_path = self.path.split("?")[0].rstrip("/")
+            silent_paths = (
+                "/api/agent/heartbeat",
+                "/api/stats",
+                "/api/nodes",
+                "/api/tasks",
+                "/api/domain/batch_recheck/status",
+                "/api/domains",
+                "/favicon.ico",
+            )
+            if clean_path in silent_paths or clean_path in ("", "/index.html"):
+                return
+
         sys.stderr.write(f"[{get_beijing_time_str()}] {self.address_string()} - {format % args}\n")
 
     def send_json(self, data, code=200):
@@ -2670,6 +2688,11 @@ class HubHandler(BaseHTTPRequestHandler):
                         except Exception:
                             pass
                     conn.commit()
+
+                if added > 0:
+                    first_dom = domains_to_add[0] if isinstance(domains_to_add[0], str) else domains_to_add[0].get("domain", "")
+                    dom_summary = f"{first_dom} 等 {added} 个" if added > 1 else first_dom
+                    sys.stderr.write(f"[{get_beijing_time_str()}] [🎯 资产入库] 节点 【{node_id}】 成功上报可用域名: {dom_summary}\n")
 
                 self.send_json({"code": 0, "msg": f"成功保存 {added} 个域名"})
                 return
